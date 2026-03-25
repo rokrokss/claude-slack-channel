@@ -1,0 +1,27 @@
+{
+  "name": "@rokrokss/claude-slack-channel",
+  "version": "0.1.0",
+  "description": "Two-way Slack channel for Claude Code — Slack DM과 채널 멘션으로 Claude Code 세션과 대화",
+  "type": "module",
+  "bin": "./server.ts",
+  "scripts": {
+    "start": "bun server.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@slack/socket-mode": "^2.0.0",
+    "@slack/web-api": "^7.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.0.0",
+    "typescript": "^5.4.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rokrokss/claude-slack-channel.git"
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+references/
+docs/superpowers/
+.claude/
+.mcp.json

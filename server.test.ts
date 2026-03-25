@@ -1,0 +1,543 @@
+import { describe, test, expect } from 'bun:test'
+import {
+  gate,
+  assertSendable,
+  assertOutboundAllowed,
+  sanitizeFilename,
+  defaultAccess,
+  fixSlackMrkdwn,
+  extractMessageText,
+  formatAuditLine,
+  auditLog,
+  type Access,
+  type AuditEntry,
+  type GateOptions,
+} from './lib.ts'
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeAccess(overrides: Partial<Access> = {}): Access {
+  return { ...defaultAccess(), ...overrides }
+}
+
+function makeOpts(overrides: Partial<GateOptions> = {}): GateOptions {
+  return {
+    access: makeAccess(),
+    botUserId: 'U_BOT',
+    ...overrides,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// gate()
+// ---------------------------------------------------------------------------
+
+describe('gate', () => {
+  test('drops messages from our own bot (user === botUserId)', () => {
+    const result = gate(
+      { user: 'U_BOT', channel_type: 'im', channel: 'D1' },
+      makeOpts({ botUserId: 'U_BOT' }),
+    )
+    expect(result.action).toBe('drop')
+  })
+
+  test('drops message_changed subtype', () => {
+    const result = gate(
+      { subtype: 'message_changed', user: 'U123', channel: 'D1' },
+      makeOpts(),
+    )
+    expect(result.action).toBe('drop')
+  })
+
+  test('drops message_deleted subtype', () => {
+    const result = gate(
+      { subtype: 'message_deleted', user: 'U123', channel: 'D1' },
+      makeOpts(),
+    )
+    expect(result.action).toBe('drop')
+  })
+
+  test('drops channel_join subtype', () => {
+    const result = gate(
+      { subtype: 'channel_join', user: 'U123', channel: 'D1' },
+      makeOpts(),
+    )
+    expect(result.action).toBe('drop')
+  })
+
+  test('allows file_share subtype through', () => {
+    const access = makeAccess({ allowFrom: ['U123'] })
+    const result = gate(
+      { subtype: 'file_share', user: 'U123', channel: 'D1' },
+      makeOpts({ access }),
+    )
+    expect(result.action).toBe('deliver')
+  })
+
+  test('drops messages with no user field', () => {
+    const result = gate(
+      { channel: 'D1' },
+      makeOpts(),
+    )
+    expect(result.action).toBe('drop')
+  })
+
+  // -- allowlist --
+
+  test('delivers from allowlisted users', () => {
+    const access = makeAccess({ allowFrom: ['U_ALLOWED'] })
+    const result = gate(
+      { user: 'U_ALLOWED', channel: 'D1' },
+      makeOpts({ access }),
+    )
+    expect(result.action).toBe('deliver')
+    expect(result.access).toBeDefined()
+  })
+
+  test('drops from non-allowlisted users', () => {
+    const access = makeAccess({ allowFrom: ['U_OTHER'] })
+    const result = gate(
+      { user: 'U_STRANGER', channel: 'D1' },
+      makeOpts({ access }),
+    )
+    expect(result.action).toBe('drop')
+  })
+
+  test('drops when allowlist is empty', () => {
+    const result = gate(
+      { user: 'U_ANYONE', channel: 'D1' },
+      makeOpts(),
+    )
+    expect(result.action).toBe('drop')
+  })
+
+  test('delivers from allowlisted user in channel', () => {
+    const access = makeAccess({ allowFrom: ['U_ALLOWED'] })
+    const result = gate(
+      { user: 'U_ALLOWED', channel: 'C_ANY', channel_type: 'channel' },
+      makeOpts({ access }),
+    )
+    expect(result.action).toBe('deliver')
+  })
+
+  test('drops from non-allowlisted user in channel', () => {
+    const access = makeAccess({ allowFrom: ['U_VIP'] })
+    const result = gate(
+      { user: 'U_NOBODY', channel: 'C_ANY', channel_type: 'channel' },
+      makeOpts({ access }),
+    )
+    expect(result.action).toBe('drop')
+  })
+
+  // -- bot_message --
+
+  test('delivers bot_message from any channel', () => {
+    const result = gate(
+      { subtype: 'bot_message', bot_id: 'B_OTHER', channel: 'C_ANY' },
+      makeOpts(),
+    )
+    expect(result.action).toBe('deliver')
+  })
+
+  test('delivers bot_message in DM', () => {
+    const result = gate(
+      { subtype: 'bot_message', bot_id: 'B_OTHER', channel: 'D1', channel_type: 'im' },
+      makeOpts(),
+    )
+    expect(result.action).toBe('deliver')
+  })
+
+  test('allows other bot with user field if in allowlist', () => {
+    const access = makeAccess({ allowFrom: ['U_OTHER_BOT'] })
+    const result = gate(
+      { bot_id: 'B_OTHER', user: 'U_OTHER_BOT', channel: 'D1' },
+      makeOpts({ access, botUserId: 'U_BOT' }),
+    )
+    expect(result.action).toBe('deliver')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// assertSendable()
+// ---------------------------------------------------------------------------
+
+describe('assertSendable', () => {
+  const stateDir = '/home/user/.claude/channels/slack'
+  const inboxDir = '/home/user/.claude/channels/slack/inbox'
+
+  test('blocks .env in state dir', () => {
+    expect(() => assertSendable(`${stateDir}/.env`, stateDir, inboxDir)).toThrow('Blocked')
+  })
+
+  test('blocks access.json in state dir', () => {
+    expect(() => assertSendable(`${stateDir}/access.json`, stateDir, inboxDir)).toThrow('Blocked')
+  })
+
+  test('blocks nested files in state dir', () => {
+    expect(() => assertSendable(`${stateDir}/subdir/secret`, stateDir, inboxDir)).toThrow('Blocked')
+  })
+
+  test('allows files in inbox/', () => {
+    expect(() => assertSendable(`${inboxDir}/photo.png`, stateDir, inboxDir)).not.toThrow()
+  })
+
+  test('allows files outside state dir entirely', () => {
+    expect(() => assertSendable('/tmp/output.txt', stateDir, inboxDir)).not.toThrow()
+  })
+
+  test('allows home directory files', () => {
+    expect(() => assertSendable('/home/user/project/file.ts', stateDir, inboxDir)).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// assertOutboundAllowed()
+// ---------------------------------------------------------------------------
+
+describe('assertOutboundAllowed', () => {
+  test('allows delivered channels', () => {
+    const delivered = new Set(['D_DELIVERED'])
+    expect(() => assertOutboundAllowed('D_DELIVERED', delivered)).not.toThrow()
+  })
+
+  test('blocks unknown channels', () => {
+    expect(() => assertOutboundAllowed('C_RANDO', new Set())).toThrow('Outbound gate')
+  })
+
+  test('blocks channels not delivered to', () => {
+    const delivered = new Set(['D_DIFFERENT'])
+    expect(() => assertOutboundAllowed('C_ATTACKER', delivered)).toThrow('Outbound gate')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// sanitizeFilename()
+// ---------------------------------------------------------------------------
+
+describe('sanitizeFilename', () => {
+  test('strips square brackets', () => {
+    expect(sanitizeFilename('file[1].txt')).toBe('file_1_.txt')
+  })
+
+  test('strips newlines', () => {
+    expect(sanitizeFilename('file\nname.txt')).toBe('file_name.txt')
+  })
+
+  test('strips carriage returns', () => {
+    expect(sanitizeFilename('file\rname.txt')).toBe('file_name.txt')
+  })
+
+  test('strips semicolons', () => {
+    expect(sanitizeFilename('file;name.txt')).toBe('file_name.txt')
+  })
+
+  test('replaces path traversal (..)', () => {
+    expect(sanitizeFilename('../../etc/passwd')).toBe('_/_/etc/passwd')
+  })
+
+  test('leaves clean names alone', () => {
+    expect(sanitizeFilename('photo.png')).toBe('photo.png')
+  })
+
+  test('handles combined attack vector', () => {
+    const result = sanitizeFilename('[../..\n;evil].txt')
+    expect(result).not.toContain('[')
+    expect(result).not.toContain('..')
+    expect(result).not.toContain('\n')
+    expect(result).not.toContain(';')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// defaultAccess()
+// ---------------------------------------------------------------------------
+
+describe('defaultAccess', () => {
+  test('returns empty allowlist', () => {
+    expect(defaultAccess().allowFrom).toEqual([])
+  })
+
+  test('has no ackReaction by default', () => {
+    expect(defaultAccess().ackReaction).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// fixSlackMrkdwn()
+// ---------------------------------------------------------------------------
+
+describe('fixSlackMrkdwn', () => {
+  test('inserts ZWS around bold', () => {
+    expect(fixSlackMrkdwn('*hello*')).toBe('\u200B*hello*\u200B')
+  })
+
+  test('handles multiple bold patterns', () => {
+    const result = fixSlackMrkdwn('*a* and *b*')
+    expect(result).toBe('\u200B*a*\u200B and \u200B*b*\u200B')
+  })
+
+  test('leaves text without bold unchanged', () => {
+    expect(fixSlackMrkdwn('no bold here')).toBe('no bold here')
+  })
+
+  test('handles empty string', () => {
+    expect(fixSlackMrkdwn('')).toBe('')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// auditLog
+// ---------------------------------------------------------------------------
+
+describe('formatAuditLine', () => {
+  test('produces JSON with trailing newline', () => {
+    const entry: AuditEntry = {
+      ts: '2026-03-25T12:00:00.000Z',
+      direction: 'inbound',
+      userId: 'U123',
+      chatId: 'C456',
+      action: 'deliver',
+    }
+    const line = formatAuditLine(entry)
+    expect(line.endsWith('\n')).toBe(true)
+    expect(JSON.parse(line.trim())).toEqual(entry)
+  })
+
+  test('includes optional fields when present', () => {
+    const entry: AuditEntry = {
+      ts: '2026-03-25T12:00:00.000Z',
+      direction: 'outbound',
+      chatId: 'C456',
+      action: 'reply',
+      threadTs: '1234.5678',
+      text: 'hello world',
+    }
+    const parsed = JSON.parse(formatAuditLine(entry).trim())
+    expect(parsed.threadTs).toBe('1234.5678')
+    expect(parsed.text).toBe('hello world')
+    expect(parsed.userId).toBeUndefined()
+  })
+
+  test('omits undefined fields', () => {
+    const entry: AuditEntry = {
+      ts: '2026-03-25T12:00:00.000Z',
+      direction: 'inbound',
+      chatId: 'C456',
+      action: 'drop',
+    }
+    const line = formatAuditLine(entry).trim()
+    expect(line).not.toContain('userId')
+    expect(line).not.toContain('threadTs')
+    expect(line).not.toContain('"text"')
+  })
+})
+
+describe('auditLog', () => {
+  test('writes to audit directory without throwing', () => {
+    const tmpDir = `/tmp/slack-audit-test-${Date.now()}`
+    auditLog(tmpDir, {
+      ts: '2026-03-25T12:00:00.000Z',
+      direction: 'inbound',
+      userId: 'U123',
+      chatId: 'C456',
+      action: 'deliver',
+    })
+    const { existsSync, readFileSync, rmSync } = require('fs')
+    const { join } = require('path')
+    const auditDir = join(tmpDir, 'audit')
+    expect(existsSync(auditDir)).toBe(true)
+    const files = require('fs').readdirSync(auditDir)
+    expect(files.length).toBe(1)
+    expect(files[0]).toMatch(/^\d{4}-\d{2}-\d{2}\.jsonl$/)
+    const content = readFileSync(join(auditDir, files[0]), 'utf-8')
+    const parsed = JSON.parse(content.trim())
+    expect(parsed.action).toBe('deliver')
+    rmSync(tmpDir, { recursive: true })
+  })
+
+  test('throws on invalid path', () => {
+    expect(() => {
+      auditLog('/dev/null/impossible', {
+        ts: '2026-03-25T12:00:00.000Z',
+        direction: 'inbound',
+        chatId: 'C456',
+        action: 'drop',
+      })
+    }).toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// extractMessageText()
+// ---------------------------------------------------------------------------
+
+describe('extractMessageText', () => {
+  test('returns plain text from text field', () => {
+    expect(extractMessageText({ text: 'hello world' })).toBe('hello world')
+  })
+
+  test('returns empty string for empty message', () => {
+    expect(extractMessageText({})).toBe('')
+  })
+
+  test('parses rich_text blocks', () => {
+    const msg = {
+      blocks: [{
+        type: 'rich_text',
+        elements: [{
+          elements: [
+            { text: 'hello ' },
+            { text: 'world' },
+          ],
+        }],
+      }],
+    }
+    expect(extractMessageText(msg)).toBe('hello world')
+  })
+
+  test('parses section blocks', () => {
+    const msg = {
+      blocks: [{
+        type: 'section',
+        text: { text: 'Section content' },
+      }],
+    }
+    expect(extractMessageText(msg)).toBe('Section content')
+  })
+
+  test('parses section with fields', () => {
+    const msg = {
+      blocks: [{
+        type: 'section',
+        fields: [{ text: 'Field 1' }, { text: 'Field 2' }],
+      }],
+    }
+    expect(extractMessageText(msg)).toBe('Field 1 Field 2')
+  })
+
+  test('parses header blocks', () => {
+    const msg = {
+      blocks: [{ type: 'header', text: { text: 'My Header' } }],
+    }
+    expect(extractMessageText(msg)).toBe('*My Header*')
+  })
+
+  test('parses context blocks', () => {
+    const msg = {
+      blocks: [{
+        type: 'context',
+        elements: [{ text: 'Context 1' }, { text: 'Context 2' }],
+      }],
+    }
+    expect(extractMessageText(msg)).toBe('Context 1 Context 2')
+  })
+
+  test('parses divider blocks', () => {
+    const msg = {
+      blocks: [
+        { type: 'section', text: { text: 'Above' } },
+        { type: 'divider' },
+        { type: 'section', text: { text: 'Below' } },
+      ],
+    }
+    expect(extractMessageText(msg)).toBe('Above\n---\nBelow')
+  })
+
+  test('parses image blocks', () => {
+    const msg = {
+      blocks: [{ type: 'image', alt_text: 'A chart' }],
+    }
+    expect(extractMessageText(msg)).toBe('A chart')
+  })
+
+  test('falls back to text when no blocks', () => {
+    const msg = { text: 'fallback text', blocks: [] }
+    expect(extractMessageText(msg)).toBe('fallback text')
+  })
+
+  test('parses attachments', () => {
+    const msg = {
+      attachments: [{
+        pretext: 'Alert',
+        title: 'CPU High',
+        title_link: 'https://grafana.example.com',
+        text: 'CPU usage > 90%',
+      }],
+    }
+    expect(extractMessageText(msg)).toContain('Alert')
+    expect(extractMessageText(msg)).toContain('<https://grafana.example.com|CPU High>')
+    expect(extractMessageText(msg)).toContain('CPU usage > 90%')
+  })
+
+  test('parses attachment fields', () => {
+    const msg = {
+      attachments: [{
+        fields: [
+          { title: 'Status', value: 'Critical' },
+          { title: 'Region', value: 'us-east-1' },
+        ],
+      }],
+    }
+    const result = extractMessageText(msg)
+    expect(result).toContain('Status: Critical')
+    expect(result).toContain('Region: us-east-1')
+  })
+
+  test('uses fallback when attachment has no content', () => {
+    const msg = {
+      attachments: [{ fallback: 'Fallback text' }],
+    }
+    expect(extractMessageText(msg)).toBe('Fallback text')
+  })
+
+  test('parses attachment with image_url', () => {
+    const msg = {
+      attachments: [{ image_url: 'https://example.com/img.png' }],
+    }
+    expect(extractMessageText(msg)).toBe('[image: https://example.com/img.png]')
+  })
+
+  test('parses blocks inside attachments', () => {
+    const msg = {
+      attachments: [{
+        blocks: [{
+          type: 'section',
+          text: { text: 'Inner block content' },
+        }],
+      }],
+    }
+    expect(extractMessageText(msg)).toBe('Inner block content')
+  })
+
+  test('returns file descriptions for file-only messages', () => {
+    const msg = {
+      files: [
+        { name: 'report.pdf' },
+        { name: 'data.csv' },
+      ],
+    }
+    expect(extractMessageText(msg)).toBe('[file: report.pdf], [file: data.csv]')
+  })
+
+  test('blocks take priority over text', () => {
+    const msg = {
+      text: 'plain text',
+      blocks: [{ type: 'section', text: { text: 'block text' } }],
+    }
+    expect(extractMessageText(msg)).toBe('block text')
+  })
+
+  test('multiple block types combined', () => {
+    const msg = {
+      blocks: [
+        { type: 'header', text: { text: 'Alert' } },
+        { type: 'section', text: { text: 'Something broke' } },
+        { type: 'context', elements: [{ text: 'via Grafana' }] },
+      ],
+    }
+    const result = extractMessageText(msg)
+    expect(result).toBe('*Alert*\nSomething broke\nvia Grafana')
+  })
+})
