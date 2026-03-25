@@ -15,18 +15,19 @@ import { WebClient } from '@slack/web-api'
 import { homedir } from 'os'
 import { join, resolve } from 'path'
 import {
-  writeFileSync,
   mkdirSync,
 } from 'fs'
 import { z } from 'zod'
 import {
   assertSendable as libAssertSendable,
   assertOutboundAllowed as libAssertOutboundAllowed,
-  sanitizeFilename,
   fixSlackMrkdwn,
   extractMessageText,
   gate as libGate,
   auditLog,
+  buildPermalink,
+  isDm,
+  resolveThreadTs,
   type Access,
   type GateResult,
 } from './lib.ts'
@@ -64,6 +65,11 @@ const allowFromList = (process.env['SLACK_ALLOW_FROM'] || '')
   .filter(Boolean)
 const ackReaction = (process.env['SLACK_ACK_REACTION'] || '').trim().replace(/^:|:$/g, '') || undefined
 console.error(`[slack] ackReaction: ${ackReaction ?? '(disabled)'}`)
+const workspace = process.env['SLACK_WORKSPACE'] || ''
+if (!workspace) {
+  console.error('[slack] SLACK_WORKSPACE is required for permalink generation. Set it in .mcp.json env field.')
+  process.exit(1)
+}
 
 // ---------------------------------------------------------------------------
 // Slack clients
@@ -397,11 +403,10 @@ mcp.registerTool('fetch_dm_thread', {
 
 async function handleMessage(event: unknown): Promise<void> {
   const ev = event as Record<string, unknown>
-  console.error(`[slack] inbound: channel=${ev['channel']} user=${ev['user'] ?? 'bot'} ts=${ev['ts']} subtype=${ev['subtype'] ?? '(none)'} text_len=${((ev['text'] as string) || '').length}`)
+  console.error(`[slack] inbound: channel=${ev['channel']} user=${ev['user'] ?? 'bot'} ts=${ev['ts']} subtype=${ev['subtype'] ?? '(none)'}`)
 
   const result = gate(event)
 
-  // Audit inbound
   auditLog(STATE_DIR, {
     ts: new Date().toISOString(),
     direction: 'inbound',
@@ -417,24 +422,23 @@ async function handleMessage(event: unknown): Promise<void> {
     return
   }
 
-  // -- deliver --
   const channelId = ev['channel'] as string
-  const messageId = ev['ts'] as string
+  const messageTs = ev['ts'] as string
   deliveredChannels.add(channelId)
-  lastInboundMessageId.set(channelId, messageId)
+  lastInboundMessageId.set(channelId, messageTs)
 
   const access = result.access!
 
-  // Ack reaction — fire immediately after gate, before any other API calls
+  // Ack reaction
   if (access.ackReaction) {
     try {
       await web.reactions.add({
         channel: channelId,
-        timestamp: ev['ts'] as string,
+        timestamp: messageTs,
         name: access.ackReaction,
       })
       pendingAckReactions.set(channelId, {
-        ts: ev['ts'] as string,
+        ts: messageTs,
         emoji: access.ackReaction,
       })
     } catch (err) { console.error('[slack] ack reaction failed:', err) }
@@ -445,43 +449,23 @@ async function handleMessage(event: unknown): Promise<void> {
     ? await resolveUserName(userId)
     : ((ev['bot_profile'] as any)?.name || (ev['username'] as string) || 'bot')
 
-  // Build meta attributes for the <channel> tag
-  const meta: Record<string, string> = {
+  // Build permalink
+  const threadTs = resolveThreadTs(ev as Record<string, unknown>)
+  const eventThreadTs = (ev['thread_ts'] as string) || undefined
+  const permalink = buildPermalink(workspace, channelId, messageTs, eventThreadTs)
+
+  // Build meta
+  const meta: Record<string, string | boolean> = {
     chat_id: channelId,
-    message_id: ev['ts'] as string,
+    thread_ts: threadTs,
     user: userName,
-    ts: ev['ts'] as string,
+    is_dm: isDm(ev as Record<string, unknown>),
   }
 
-  // If already in a thread, use that; otherwise use the message ts as thread root
-  // so Claude's reply always goes into a thread
-  meta.thread_ts = (ev['thread_ts'] as string) || (ev['ts'] as string)
-
-  const evFiles = ev['files'] as any[] | undefined
-  if (evFiles?.length) {
-    const fileDescs = evFiles.map((f: any) => {
-      const name = sanitizeFilename(f.name || 'unnamed')
-      return `${name} (${f.mimetype || 'unknown'}, ${f.size || '?'} bytes)`
-    })
-    meta.attachment_count = String(evFiles.length)
-    meta.attachments = fileDescs.join('; ')
-  }
-
-  // Extract text — use Block Kit parser for bot messages or when text is empty
-  let text = (ev['text'] as string | undefined) || ''
-  if (!text || ev['subtype'] === 'bot_message') {
-    const extracted = extractMessageText(ev as Record<string, any>)
-    if (extracted) text = extracted
-  }
-  if (botUserId) {
-    text = text.replace(new RegExp(`<@${botUserId}>\\s*`, 'g'), '').trim()
-  }
-
-  // Push into Claude Code session via MCP notification
-  console.error(`[slack] delivering to Claude: chat_id=${channelId} user=${userName} thread_ts=${meta.thread_ts} text_len=${text.length}`)
+  console.error(`[slack] delivering permalink to Claude: ${permalink} is_dm=${meta.is_dm}`)
   mcp.server.notification({
     method: 'notifications/claude/channel',
-    params: { content: text, meta },
+    params: { content: permalink, meta },
   })
 }
 
