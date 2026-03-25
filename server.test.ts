@@ -9,6 +9,9 @@ import {
   extractMessageText,
   formatAuditLine,
   auditLog,
+  buildPermalink,
+  isDm,
+  resolveThreadTs,
   type Access,
   type AuditEntry,
   type GateOptions,
@@ -539,5 +542,63 @@ describe('extractMessageText', () => {
     }
     const result = extractMessageText(msg)
     expect(result).toBe('*Alert*\nSomething broke\nvia Grafana')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// buildPermalink()
+// ---------------------------------------------------------------------------
+
+describe('buildPermalink', () => {
+  const workspace = 'msuniverse'
+
+  test('root message permalink', () => {
+    const result = buildPermalink(workspace, 'C09GDRYF3FF', '1774461389.128779')
+    expect(result).toBe('https://msuniverse.slack.com/archives/C09GDRYF3FF/p1774461389128779')
+  })
+
+  test('thread reply permalink', () => {
+    const result = buildPermalink(workspace, 'C09GDRYF3FF', '1774461419.933019', '1774461389.128779')
+    expect(result).toBe('https://msuniverse.slack.com/archives/C09GDRYF3FF/p1774461419933019?thread_ts=1774461389.128779&cid=C09GDRYF3FF')
+  })
+
+  test('ts dot removal', () => {
+    const result = buildPermalink(workspace, 'C123', '1234567890.123456')
+    expect(result).toBe('https://msuniverse.slack.com/archives/C123/p1234567890123456')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isDm()
+// ---------------------------------------------------------------------------
+
+describe('isDm', () => {
+  test('channel_type im is DM', () => {
+    expect(isDm({ channel_type: 'im' })).toBe(true)
+  })
+  test('channel_type channel is not DM', () => {
+    expect(isDm({ channel_type: 'channel' })).toBe(false)
+  })
+  test('no channel_type is not DM', () => {
+    expect(isDm({})).toBe(false)
+  })
+  test('app_mention event (no channel_type) is not DM', () => {
+    expect(isDm({ type: 'app_mention' })).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveThreadTs()
+// ---------------------------------------------------------------------------
+
+describe('resolveThreadTs', () => {
+  test('uses thread_ts when present', () => {
+    expect(resolveThreadTs({ thread_ts: '111.222', ts: '333.444' })).toBe('111.222')
+  })
+  test('falls back to ts when thread_ts is missing', () => {
+    expect(resolveThreadTs({ ts: '333.444' })).toBe('333.444')
+  })
+  test('falls back to ts when thread_ts is empty string', () => {
+    expect(resolveThreadTs({ thread_ts: '', ts: '333.444' })).toBe('333.444')
   })
 })

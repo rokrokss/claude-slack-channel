@@ -158,6 +158,27 @@ export function assertOutboundAllowed(
   )
 }
 
+// Permalink
+
+export function buildPermalink(workspace: string, channel: string, ts: string, threadTs?: string): string {
+  const tsNoDot = ts.replace('.', '')
+  const base = `https://${workspace}.slack.com/archives/${channel}/p${tsNoDot}`
+  if (threadTs) {
+    return `${base}?thread_ts=${threadTs}&cid=${channel}`
+  }
+  return base
+}
+
+// Event helpers
+
+export function isDm(event: Record<string, unknown>): boolean {
+  return event['channel_type'] === 'im'
+}
+
+export function resolveThreadTs(event: Record<string, unknown>): string {
+  return (event['thread_ts'] as string) || (event['ts'] as string) || ''
+}
+
 // Gate
 
 export function gate(event: unknown, opts: GateOptions): GateResult {
