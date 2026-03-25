@@ -320,95 +320,50 @@ mcp.registerTool('remove_reaction', {
   }
 })
 
-mcp.registerTool('edit_message', {
-  description: "Edit a previously sent message (bot's own messages only).",
-  inputSchema: {
-    chat_id: z.string().describe('Channel ID'),
-    message_id: z.string().describe('Message timestamp (ts)'),
-    text: z.string().describe('New message text'),
-  },
-}, async (args) => {
-  console.error(`[slack] edit_message called: chat_id=${args.chat_id} message_id=${args.message_id} text_len=${args.text?.length ?? 0}`)
-  auditLog(STATE_DIR, {
-    ts: new Date().toISOString(),
-    direction: 'outbound',
-    chatId: args.chat_id,
-    action: 'edit_message',
-    text: args.text,
-    replyTo: lastInboundMessageId.get(args.chat_id),
-  })
 
-  await web.chat.update({
-    channel: args.chat_id,
-    ts: args.message_id,
-    attachments: [{
-      color: DEFAULT_COLOR,
-      text: fixSlackMrkdwn(args.text),
-      mrkdwn_in: ['text'],
-    }],
-  })
-  console.error(`[slack] edit_message done: ${args.message_id}`)
-  return {
-    content: [{ type: 'text' as const, text: `Edited message ${args.message_id}` }],
-  }
-})
-
-mcp.registerTool('delete_message', {
+mcp.registerTool('delete_bot_message', {
   description: "Delete a previously sent message (bot's own messages only).",
   inputSchema: {
     chat_id: z.string().describe('Channel ID'),
     message_id: z.string().describe('Message timestamp (ts)'),
   },
 }, async (args) => {
-  console.error(`[slack] delete_message called: chat_id=${args.chat_id} message_id=${args.message_id}`)
+  console.error(`[slack] delete_bot_message called: chat_id=${args.chat_id} message_id=${args.message_id}`)
   auditLog(STATE_DIR, {
     ts: new Date().toISOString(),
     direction: 'outbound',
     chatId: args.chat_id,
-    action: 'delete_message',
+    action: 'delete_bot_message',
     replyTo: lastInboundMessageId.get(args.chat_id),
   })
 
   await web.chat.delete({ channel: args.chat_id, ts: args.message_id })
-  console.error(`[slack] delete_message done: ${args.message_id}`)
+  console.error(`[slack] delete_bot_message done: ${args.message_id}`)
   return { content: [{ type: 'text' as const, text: `Deleted message ${args.message_id}` }] }
 })
 
-mcp.registerTool('fetch_messages', {
-  description: 'Fetch message history from a channel or thread. Returns oldest-first.',
+mcp.registerTool('fetch_dm_thread', {
+  description: 'DM permalink 수신 시에만 사용. 봇 토큰으로만 접근 가능한 DM 스레드를 읽기 위한 용도. 다른 용도로 사용 금지.',
   inputSchema: {
-    channel: z.string().describe('Channel ID'),
-    limit: z.number().optional().describe('Max messages to fetch (default 20, max 100)'),
-    thread_ts: z.string().optional().describe('If set, fetch replies in this thread'),
+    channel: z.string().describe('DM channel ID'),
+    thread_ts: z.string().describe('Thread timestamp'),
   },
 }, async (args) => {
-  console.error(`[slack] fetch_messages called: channel=${args.channel} thread_ts=${args.thread_ts ?? '(none)'} limit=${args.limit ?? 20}`)
+  console.error(`[slack] fetch_dm_thread called: channel=${args.channel} thread_ts=${args.thread_ts}`)
   auditLog(STATE_DIR, {
     ts: new Date().toISOString(),
     direction: 'outbound',
     chatId: args.channel,
-    action: 'fetch_messages',
-    threadTs: args.thread_ts || undefined,
+    action: 'fetch_dm_thread',
+    threadTs: args.thread_ts,
     replyTo: lastInboundMessageId.get(args.channel),
   })
 
-  const limit = Math.min(args.limit || 20, 100)
-
-  let messages: any[]
-  if (args.thread_ts) {
-    const res = await web.conversations.replies({
-      channel: args.channel,
-      ts: args.thread_ts,
-      limit,
-    })
-    messages = res.messages || []
-  } else {
-    const res = await web.conversations.history({
-      channel: args.channel,
-      limit,
-    })
-    messages = (res.messages || []).reverse() // oldest-first
-  }
+  const res = await web.conversations.replies({
+    channel: args.channel,
+    ts: args.thread_ts,
+  })
+  const messages = res.messages || []
 
   const formatted = await Promise.all(
     messages.map(async (m: any) => {
@@ -423,72 +378,18 @@ mcp.registerTool('fetch_messages', {
           name: f.name,
           mimetype: f.mimetype,
           size: f.size,
+          url_private: f.url_private,
         })),
       }
     }),
   )
 
-  console.error(`[slack] fetch_messages done: ${formatted.length} message(s)`)
+  console.error(`[slack] fetch_dm_thread done: ${formatted.length} message(s)`)
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(formatted, null, 2) }],
   }
 })
 
-mcp.registerTool('download_attachment', {
-  description: 'Download attachments from a Slack message. Returns local file paths.',
-  inputSchema: {
-    chat_id: z.string().describe('Channel ID'),
-    message_id: z.string().describe('Message timestamp (ts) containing the files'),
-  },
-}, async (args) => {
-  console.error(`[slack] download_attachment called: chat_id=${args.chat_id} message_id=${args.message_id}`)
-  auditLog(STATE_DIR, {
-    ts: new Date().toISOString(),
-    direction: 'outbound',
-    chatId: args.chat_id,
-    action: 'download_attachment',
-    replyTo: lastInboundMessageId.get(args.chat_id),
-  })
-
-  // Fetch the specific message to get file info
-  const res = await web.conversations.replies({
-    channel: args.chat_id,
-    ts: args.message_id,
-    limit: 1,
-    inclusive: true,
-  })
-
-  const msg = res.messages?.[0]
-  if (!msg?.files?.length) {
-    return { content: [{ type: 'text' as const, text: 'No files found on that message.' }] }
-  }
-
-  const paths: string[] = []
-  for (const file of msg.files) {
-    const url = file.url_private_download || file.url_private
-    if (!url) continue
-
-    const safeName = sanitizeFilename(file.name || `file_${Date.now()}`)
-    const outPath = join(INBOX_DIR, `${args.message_id.replaceAll('.', '_')}_${safeName}`)
-
-    const resp = await fetch(url, {
-      headers: { Authorization: `Bearer ${botToken}` },
-    })
-    if (!resp.ok) continue
-
-    const buffer = Buffer.from(await resp.arrayBuffer())
-    writeFileSync(outPath, buffer)
-    paths.push(outPath)
-  }
-
-  const resultText = paths.length
-    ? `Downloaded ${paths.length} file(s):\n${paths.join('\n')}`
-    : 'Failed to download any files.'
-  console.error(`[slack] download_attachment done: ${paths.length} file(s)`)
-  return {
-    content: [{ type: 'text' as const, text: resultText }],
-  }
-})
 
 // ---------------------------------------------------------------------------
 // Inbound message handler
@@ -553,7 +454,7 @@ async function handleMessage(event: unknown): Promise<void> {
   }
 
   // If already in a thread, use that; otherwise use the message ts as thread root
-  // so Claude's reply always goes into a thread (like bbot-legacy behavior)
+  // so Claude's reply always goes into a thread
   meta.thread_ts = (ev['thread_ts'] as string) || (ev['ts'] as string)
 
   const evFiles = ev['files'] as any[] | undefined
