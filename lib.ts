@@ -197,6 +197,18 @@ export function isStaleEvent(eventTs: string, maxAgeMs: number = DEFAULT_STALE_T
   return Date.now() - date.getTime() > maxAgeMs
 }
 
+// Empty message filtering
+
+export function isEmptyMessage(event: Record<string, unknown>): boolean {
+  // Has files, blocks, or attachments → not empty
+  if (event['files'] && (event['files'] as unknown[]).length > 0) return false
+  if (event['blocks'] && (event['blocks'] as unknown[]).length > 0) return false
+  if (event['attachments'] && (event['attachments'] as unknown[]).length > 0) return false
+  // Check text
+  const text = (event['text'] as string) || ''
+  return text.trim().length === 0
+}
+
 // Gate
 
 export function gate(event: unknown, opts: GateOptions): GateResult {

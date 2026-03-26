@@ -14,6 +14,7 @@ import {
   resolveThreadTs,
   parseSlackTimestamp,
   isStaleEvent,
+  isEmptyMessage,
   type Access,
   type AuditEntry,
   type GateOptions,
@@ -650,5 +651,39 @@ describe('isStaleEvent', () => {
     const ts = String((Date.now() / 1000) - 30) // 30 seconds ago
     expect(isStaleEvent(ts, 60_000)).toBe(false)  // 1 min threshold
     expect(isStaleEvent(ts, 20_000)).toBe(true)   // 20 sec threshold
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isEmptyMessage()
+// ---------------------------------------------------------------------------
+
+describe('isEmptyMessage', () => {
+  test('returns true for empty text', () => {
+    expect(isEmptyMessage({ text: '' })).toBe(true)
+  })
+
+  test('returns true for whitespace-only text', () => {
+    expect(isEmptyMessage({ text: '   \n\t  ' })).toBe(true)
+  })
+
+  test('returns true for no text field', () => {
+    expect(isEmptyMessage({})).toBe(true)
+  })
+
+  test('returns false for message with text', () => {
+    expect(isEmptyMessage({ text: 'hello' })).toBe(false)
+  })
+
+  test('returns false for message with files (no text)', () => {
+    expect(isEmptyMessage({ files: [{ id: 'F1' }] })).toBe(false)
+  })
+
+  test('returns false for message with blocks (no text)', () => {
+    expect(isEmptyMessage({ blocks: [{ type: 'section' }] })).toBe(false)
+  })
+
+  test('returns false for message with attachments', () => {
+    expect(isEmptyMessage({ attachments: [{ text: 'alert' }] })).toBe(false)
   })
 })
