@@ -367,17 +367,31 @@ socket.on('app_mention', async ({ event, ack }) => {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  // Resolve bot's own user ID (for mention detection + self-filtering)
-  try {
-    const auth = await web.auth.test()
-    botUserId = (auth.user_id as string) || ''
-  } catch (err) {
-    console.error('[slack] Failed to resolve bot user ID:', err)
-  }
+  // Register oninitialized — defer Socket Mode until we confirm client supports channels
+  mcp.server.oninitialized = () => {
+    void (async () => {
+      const caps = mcp.server.getClientCapabilities()
+      if (!caps?.experimental?.['claude/channel']) {
+        console.error('[slack] Socket Mode skipped — client does not support channels. Tools-only mode.')
+        return
+      }
 
-  // Connect Socket Mode (Slack ↔ local WebSocket)
-  await socket.start()
-  console.error('[slack] Socket Mode connected')
+      // Resolve bot's own user ID (for mention detection + self-filtering)
+      try {
+        const auth = await web.auth.test()
+        botUserId = (auth.user_id as string) || ''
+      } catch (err) {
+        console.error('[slack] Failed to resolve bot user ID, skipping Socket Mode:', err)
+        return
+      }
+
+      // Connect Socket Mode (Slack ↔ local WebSocket)
+      await socket.start()
+      console.error('[slack] Socket Mode connected')
+    })().catch((err) => {
+      console.error('[slack] Socket Mode init failed:', err)
+    })
+  }
 
   // Connect MCP stdio (server ↔ Claude Code)
   const transport = new StdioServerTransport()
