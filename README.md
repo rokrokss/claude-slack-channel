@@ -82,9 +82,6 @@ Claude (tool call)
     ├── react ─────────── 이모지 리액션 추가
     │                      reactions.add
     │
-    ├── remove_reaction ── 이모지 리액션 제거
-    │                      reactions.remove
-    │
     ├── delete_bot_message ── 봇 메시지 삭제
     │                         chat.delete (자기 메시지만)
     │

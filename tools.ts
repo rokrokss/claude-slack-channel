@@ -106,34 +106,6 @@ export function registerTools(deps: ToolDependencies): void {
     }
   })
 
-  mcp.registerTool('remove_reaction', {
-    description: 'Remove an emoji reaction from a Slack message.',
-    inputSchema: {
-      chat_id: z.string().describe('Channel ID'),
-      message_id: z.string().describe('Message timestamp (ts)'),
-      emoji: z.string().describe('Emoji name without colons (e.g. "eyes")'),
-    },
-  }, async (args) => {
-    console.error(`[slack] remove_reaction called: chat_id=${args.chat_id} message_id=${args.message_id} emoji=${args.emoji}`)
-    auditLog(stateDir, {
-      ts: new Date().toISOString(),
-      direction: 'outbound',
-      chatId: args.chat_id,
-      action: 'remove_reaction',
-      replyTo: lastInboundMessageId.get(args.message_id),
-    })
-
-    await web.reactions.remove({
-      channel: args.chat_id,
-      timestamp: args.message_id,
-      name: args.emoji,
-    })
-    console.error(`[slack] remove_reaction done: :${args.emoji}: from ${args.message_id}`)
-    return {
-      content: [{ type: 'text' as const, text: `Removed :${args.emoji}: from ${args.message_id}` }],
-    }
-  })
-
   mcp.registerTool('delete_bot_message', {
     description: "Delete a previously sent message (bot's own messages only).",
     inputSchema: {

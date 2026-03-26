@@ -326,10 +326,15 @@ async function handleMessage(event: unknown): Promise<void> {
   lastInboundContext = { channelId, threadTs }
 
   console.error(`[slack] delivering permalink to Claude: ${permalink} is_dm=${meta.is_dm}`)
-  mcp.server.notification({
-    method: 'notifications/claude/channel',
-    params: { content: permalink, meta },
-  })
+  try {
+    await mcp.server.notification({
+      method: 'notifications/claude/channel',
+      params: { content: permalink, meta },
+    })
+    console.error(`[slack] notification sent successfully`)
+  } catch (err) {
+    console.error('[slack] notification failed:', err)
+  }
 }
 
 // ---------------------------------------------------------------------------
