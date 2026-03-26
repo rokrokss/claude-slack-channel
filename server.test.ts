@@ -17,7 +17,7 @@ import {
   type Access,
   type AuditEntry,
   type GateOptions,
-} from './lib.ts'
+} from './lib/index.ts'
 
 // ---------------------------------------------------------------------------
 // Helpers
