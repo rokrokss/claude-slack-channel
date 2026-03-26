@@ -2,10 +2,6 @@
 
 Claude Code 세션과 Slack을 양방향으로 연결합니다. Slack DM이나 채널 멘션으로 Claude Code와 대화할 수 있습니다.
 
-Socket Mode를 사용하므로 공개 URL이 필요 없습니다. 방화벽 뒤에서도 동작합니다.
-
-> **Research Preview** — Claude Code v2.1.80+ 및 claude.ai 로그인 필요.
-
 ## 아키텍처
 
 ```
