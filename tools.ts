@@ -10,7 +10,7 @@ export interface ToolDependencies {
   defaultColor: string
   assertOutboundAllowed: (chatId: string) => void
   lastInboundMessageId: Map<string, string>
-  pendingAckReactions: Map<string, { ts: string; emoji: string }>
+  pendingAckReactions: Map<string, { channel: string; ts: string; emoji: string }>
   resolveUserName: (userId: string) => Promise<string>
 }
 
@@ -34,7 +34,7 @@ export function registerTools(deps: ToolDependencies): void {
       action: 'reply',
       threadTs: args.thread_ts || undefined,
       text: args.text,
-      replyTo: lastInboundMessageId.get(args.chat_id),
+      replyTo: args.thread_ts ? lastInboundMessageId.get(args.thread_ts) : undefined,
     })
 
     assertOutboundAllowed(args.chat_id)
@@ -56,12 +56,13 @@ export function registerTools(deps: ToolDependencies): void {
     console.error(`[slack] reply sent: chat_id=${args.chat_id} ts=${lastTs}`)
 
     // Auto-remove ack reaction after reply
-    const pendingAck = pendingAckReactions.get(args.chat_id)
+    const ackKey = args.thread_ts
+    const pendingAck = ackKey ? pendingAckReactions.get(ackKey) : undefined
     if (pendingAck) {
-      pendingAckReactions.delete(args.chat_id)
+      pendingAckReactions.delete(ackKey!)
       try {
         await web.reactions.remove({
-          channel: args.chat_id,
+          channel: pendingAck.channel,
           timestamp: pendingAck.ts,
           name: pendingAck.emoji,
         })
@@ -91,7 +92,7 @@ export function registerTools(deps: ToolDependencies): void {
       direction: 'outbound',
       chatId: args.chat_id,
       action: 'react',
-      replyTo: lastInboundMessageId.get(args.chat_id),
+      replyTo: lastInboundMessageId.get(args.message_id),
     })
 
     await web.reactions.add({
@@ -119,7 +120,7 @@ export function registerTools(deps: ToolDependencies): void {
       direction: 'outbound',
       chatId: args.chat_id,
       action: 'remove_reaction',
-      replyTo: lastInboundMessageId.get(args.chat_id),
+      replyTo: lastInboundMessageId.get(args.message_id),
     })
 
     await web.reactions.remove({
@@ -146,7 +147,7 @@ export function registerTools(deps: ToolDependencies): void {
       direction: 'outbound',
       chatId: args.chat_id,
       action: 'delete_bot_message',
-      replyTo: lastInboundMessageId.get(args.chat_id),
+      replyTo: lastInboundMessageId.get(args.message_id),
     })
 
     await web.chat.delete({ channel: args.chat_id, ts: args.message_id })
@@ -168,7 +169,7 @@ export function registerTools(deps: ToolDependencies): void {
       chatId: args.channel,
       action: 'fetch_dm_thread',
       threadTs: args.thread_ts,
-      replyTo: lastInboundMessageId.get(args.channel),
+      replyTo: lastInboundMessageId.get(args.thread_ts),
     })
 
     const res = await web.conversations.replies({

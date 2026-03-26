@@ -94,12 +94,12 @@ const access: Access = { allowFrom: allowFromList, ackReaction, botOwner }
 // Track channels that passed inbound gate (session-lifetime cache)
 const deliveredChannels = new Set<string>()
 
-// Track pending ack reactions to auto-remove on reply
-const pendingAckReactions = new Map<string, { ts: string; emoji: string }>()
+// Track pending ack reactions to auto-remove on reply (key: thread ts)
+const pendingAckReactions = new Map<string, { channel: string; ts: string; emoji: string }>()
 
 const dedup = new EventDeduplicator()
 
-// Track last inbound message_id per channel for audit pairing
+// Track last inbound message_id per thread for audit pairing (key: thread_ts)
 const lastInboundMessageId = new Map<string, string>()
 
 function assertOutboundAllowed(chatId: string): void {
@@ -284,7 +284,8 @@ async function handleMessage(event: unknown): Promise<void> {
 
   // 5. Deliver (기존 로직 유지)
   deliveredChannels.add(channelId)
-  lastInboundMessageId.set(channelId, messageTs)
+  const threadTs = resolveThreadTs(ev as Record<string, unknown>)
+  lastInboundMessageId.set(threadTs, messageTs)
 
   const access = result.access!
 
@@ -296,7 +297,8 @@ async function handleMessage(event: unknown): Promise<void> {
         timestamp: messageTs,
         name: access.ackReaction,
       })
-      pendingAckReactions.set(channelId, {
+      pendingAckReactions.set(threadTs, {
+        channel: channelId,
         ts: messageTs,
         emoji: access.ackReaction,
       })
@@ -309,7 +311,6 @@ async function handleMessage(event: unknown): Promise<void> {
     : ((ev['bot_profile'] as any)?.name || (ev['username'] as string) || 'bot')
 
   // Build permalink
-  const threadTs = resolveThreadTs(ev as Record<string, unknown>)
   const eventThreadTs = (ev['thread_ts'] as string) || undefined
   const permalink = buildPermalink(workspace, channelId, messageTs, eventThreadTs)
 
