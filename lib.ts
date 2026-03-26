@@ -180,6 +180,23 @@ export function resolveThreadTs(event: Record<string, unknown>): string {
   return (event['thread_ts'] as string) || (event['ts'] as string) || ''
 }
 
+// Stale event filtering
+
+export function parseSlackTimestamp(ts: string): Date | null {
+  const sec = parseFloat(ts)
+  if (isNaN(sec)) return null
+  return new Date(sec * 1000)
+}
+
+/** Default: 10 minutes in milliseconds */
+export const DEFAULT_STALE_THRESHOLD_MS = 10 * 60 * 1000
+
+export function isStaleEvent(eventTs: string, maxAgeMs: number = DEFAULT_STALE_THRESHOLD_MS): boolean {
+  const date = parseSlackTimestamp(eventTs)
+  if (!date) return false // can't determine age → don't drop
+  return Date.now() - date.getTime() > maxAgeMs
+}
+
 // Gate
 
 export function gate(event: unknown, opts: GateOptions): GateResult {

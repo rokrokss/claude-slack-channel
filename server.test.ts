@@ -12,6 +12,8 @@ import {
   buildPermalink,
   isDm,
   resolveThreadTs,
+  parseSlackTimestamp,
+  isStaleEvent,
   type Access,
   type AuditEntry,
   type GateOptions,
@@ -600,5 +602,53 @@ describe('resolveThreadTs', () => {
   })
   test('falls back to ts when thread_ts is empty string', () => {
     expect(resolveThreadTs({ thread_ts: '', ts: '333.444' })).toBe('333.444')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseSlackTimestamp()
+// ---------------------------------------------------------------------------
+
+describe('parseSlackTimestamp', () => {
+  test('parses standard Slack timestamp', () => {
+    const result = parseSlackTimestamp('1711500000.123456')
+    expect(result).toBeInstanceOf(Date)
+    expect(result!.getTime()).toBe(1711500000123)
+  })
+
+  test('returns null for invalid timestamp', () => {
+    expect(parseSlackTimestamp('')).toBeNull()
+    expect(parseSlackTimestamp('not-a-number')).toBeNull()
+  })
+
+  test('handles integer timestamp without fractional part', () => {
+    const result = parseSlackTimestamp('1711500000.000000')
+    expect(result).toBeInstanceOf(Date)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isStaleEvent()
+// ---------------------------------------------------------------------------
+
+describe('isStaleEvent', () => {
+  test('returns true for event older than maxAge', () => {
+    const oldTs = String((Date.now() / 1000) - 700) // 11+ minutes ago
+    expect(isStaleEvent(oldTs, 600_000)).toBe(true)
+  })
+
+  test('returns false for recent event', () => {
+    const recentTs = String(Date.now() / 1000) // now
+    expect(isStaleEvent(recentTs, 600_000)).toBe(false)
+  })
+
+  test('returns false for unparseable timestamp', () => {
+    expect(isStaleEvent('', 600_000)).toBe(false)
+  })
+
+  test('respects custom maxAge', () => {
+    const ts = String((Date.now() / 1000) - 30) // 30 seconds ago
+    expect(isStaleEvent(ts, 60_000)).toBe(false)  // 1 min threshold
+    expect(isStaleEvent(ts, 20_000)).toBe(true)   // 20 sec threshold
   })
 })
