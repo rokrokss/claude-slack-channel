@@ -4,10 +4,8 @@ export interface Access {
   botOwner?: string
 }
 
-export type GateAction = 'deliver' | 'drop'
-
 export interface GateResult {
-  action: GateAction
+  action: 'deliver' | 'drop'
   access?: Access
 }
 
