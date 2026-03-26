@@ -28,6 +28,10 @@ import {
   buildPermalink,
   isDm,
   resolveThreadTs,
+  isStaleEvent,
+  isEmptyMessage,
+  EventDeduplicator,
+  RateLimiter,
   type Access,
   type GateResult,
 } from './lib.ts'
@@ -106,6 +110,10 @@ const deliveredChannels = new Set<string>()
 // Track pending ack reactions to auto-remove on reply
 const pendingAckReactions = new Map<string, { ts: string; emoji: string }>()
 
+const dedup = new EventDeduplicator()
+const RATE_LIMIT_MAX = parseInt(process.env['SLACK_RATE_LIMIT_MAX'] || '10', 10)
+const RATE_LIMIT_WINDOW_MS = parseInt(process.env['SLACK_RATE_LIMIT_WINDOW_MS'] || '60000', 10)
+const rateLimiter = new RateLimiter(RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS)
 
 // Track last inbound message_id per channel for audit pairing
 const lastInboundMessageId = new Map<string, string>()
@@ -438,27 +446,54 @@ mcp.server.setNotificationHandler(
 
 async function handleMessage(event: unknown): Promise<void> {
   const ev = event as Record<string, unknown>
-  console.error(`[slack] inbound: channel=${ev['channel']} user=${ev['user'] ?? 'bot'} ts=${ev['ts']} subtype=${ev['subtype'] ?? '(none)'}`)
+  const channelId = ev['channel'] as string
+  const messageTs = ev['ts'] as string
+  console.error(`[slack] inbound: channel=${channelId} user=${ev['user'] ?? 'bot'} ts=${messageTs} subtype=${ev['subtype'] ?? '(none)'}`)
 
+  // 1. Dedup — 이벤트 재전송 방지 (가장 먼저, 가장 저렴)
+  if (dedup.isDuplicate(channelId, messageTs)) {
+    console.error(`[slack] inbound dropped (duplicate): channel=${channelId} ts=${messageTs}`)
+    return
+  }
+
+  // 2. Stale — 오래된 이벤트 드롭
+  const eventTs = (ev['event_ts'] as string) || messageTs
+  if (isStaleEvent(eventTs)) {
+    console.error(`[slack] inbound dropped (stale): channel=${channelId} ts=${eventTs}`)
+    return
+  }
+
+  // 3. Empty — 빈 메시지 드롭
+  if (isEmptyMessage(ev as Record<string, unknown>)) {
+    console.error(`[slack] inbound dropped (empty): channel=${channelId}`)
+    return
+  }
+
+  // 4. Gate — 접근 제어 (기존)
   const result = gate(event)
 
   auditLog(STATE_DIR, {
     ts: new Date().toISOString(),
     direction: 'inbound',
     userId: (ev['user'] as string) || undefined,
-    chatId: (ev['channel'] as string) || '',
+    chatId: channelId,
     action: result.action,
     threadTs: (ev['thread_ts'] as string) || undefined,
     text: (ev['text'] as string) || undefined,
   })
 
   if (result.action === 'drop') {
-    console.error(`[slack] inbound dropped: channel=${ev['channel']}`)
+    console.error(`[slack] inbound dropped (gate): channel=${channelId}`)
     return
   }
 
-  const channelId = ev['channel'] as string
-  const messageTs = ev['ts'] as string
+  // 5. Rate limit — 채널당 속도 제한
+  if (rateLimiter.isRateLimited(channelId)) {
+    console.error(`[slack] inbound dropped (rate limited): channel=${channelId}`)
+    return
+  }
+
+  // 6. Deliver (기존 로직 유지)
   deliveredChannels.add(channelId)
   lastInboundMessageId.set(channelId, messageTs)
 
@@ -505,7 +540,6 @@ async function handleMessage(event: unknown): Promise<void> {
     method: 'notifications/claude/channel',
     params: { content: permalink, meta },
   })
-
 }
 
 // ---------------------------------------------------------------------------
