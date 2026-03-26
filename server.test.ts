@@ -16,6 +16,7 @@ import {
   isStaleEvent,
   isEmptyMessage,
   EventDeduplicator,
+  RateLimiter,
   type Access,
   type AuditEntry,
   type GateOptions,
@@ -734,5 +735,41 @@ describe('EventDeduplicator', () => {
     while (Date.now() - start < 60) {}
     dedup.isDuplicate('C1', '3.0') // triggers cleanup (interval=1)
     expect(dedup.size).toBe(1) // only '3.0' remains
+  })
+})
+
+// ---------------------------------------------------------------------------
+// RateLimiter
+// ---------------------------------------------------------------------------
+
+describe('RateLimiter', () => {
+  test('allows events under limit', () => {
+    const limiter = new RateLimiter(5, 60_000) // 5 per minute
+    expect(limiter.isRateLimited('C1')).toBe(false)
+    expect(limiter.isRateLimited('C1')).toBe(false)
+    expect(limiter.isRateLimited('C1')).toBe(false)
+  })
+
+  test('blocks events over limit', () => {
+    const limiter = new RateLimiter(2, 60_000) // 2 per minute
+    limiter.isRateLimited('C1') // 1
+    limiter.isRateLimited('C1') // 2
+    expect(limiter.isRateLimited('C1')).toBe(true) // 3 → blocked
+  })
+
+  test('separate channels have independent limits', () => {
+    const limiter = new RateLimiter(1, 60_000)
+    limiter.isRateLimited('C1') // 1 for C1
+    expect(limiter.isRateLimited('C1')).toBe(true)  // C1 at limit
+    expect(limiter.isRateLimited('C2')).toBe(false)  // C2 is fresh
+  })
+
+  test('events outside window do not count', () => {
+    const limiter = new RateLimiter(1, 50) // 1 per 50ms
+    limiter.isRateLimited('C1') // 1
+    expect(limiter.isRateLimited('C1')).toBe(true) // blocked
+    const start = Date.now()
+    while (Date.now() - start < 60) {} // wait for window to pass
+    expect(limiter.isRateLimited('C1')).toBe(false) // allowed again
   })
 })

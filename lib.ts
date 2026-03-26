@@ -243,6 +243,43 @@ export class EventDeduplicator {
   }
 }
 
+// Rate limiting (per-channel sliding window)
+
+export class RateLimiter {
+  private windows = new Map<string, number[]>() // channel → timestamps
+  private readonly maxEvents: number
+  private readonly windowMs: number
+
+  constructor(maxEvents: number, windowMs: number) {
+    this.maxEvents = maxEvents
+    this.windowMs = windowMs
+  }
+
+  /** Returns true if the event should be rate-limited (dropped). */
+  isRateLimited(channel: string): boolean {
+    const now = Date.now()
+    const cutoff = now - this.windowMs
+
+    let timestamps = this.windows.get(channel)
+    if (!timestamps) {
+      timestamps = []
+      this.windows.set(channel, timestamps)
+    }
+
+    // Remove expired entries
+    while (timestamps.length > 0 && timestamps[0] <= cutoff) {
+      timestamps.shift()
+    }
+
+    if (timestamps.length >= this.maxEvents) {
+      return true
+    }
+
+    timestamps.push(now)
+    return false
+  }
+}
+
 // Empty message filtering
 
 export function isEmptyMessage(event: Record<string, unknown>): boolean {
