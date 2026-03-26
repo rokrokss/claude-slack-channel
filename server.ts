@@ -390,6 +390,7 @@ async function main(): Promise<void> {
       console.error('[slack] Socket Mode connected')
     })().catch((err) => {
       console.error('[slack] Socket Mode init failed:', err)
+      process.exit(1)
     })
   }
 
