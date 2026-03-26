@@ -65,6 +65,8 @@ const allowFromList = (process.env['SLACK_ALLOW_FROM'] || '')
   .filter(Boolean)
 const ackReaction = (process.env['SLACK_ACK_REACTION'] || '').trim().replace(/^:|:$/g, '') || undefined
 console.error(`[slack] ackReaction: ${ackReaction ?? '(disabled)'}`)
+const botOwner = (process.env['SLACK_BOT_OWNER'] || '').trim() || undefined
+console.error(`[slack] botOwner: ${botOwner ?? '(not set)'}`)
 const workspace = process.env['SLACK_WORKSPACE'] || ''
 if (!workspace) {
   console.error('[slack] SLACK_WORKSPACE is required for permalink generation. Set it in .mcp.json env field.')
@@ -84,7 +86,7 @@ let botUserId = ''
 // Access control — from environment variables
 // ---------------------------------------------------------------------------
 
-const access: Access = { allowFrom: allowFromList, ackReaction }
+const access: Access = { allowFrom: allowFromList, ackReaction, botOwner }
 
 // ---------------------------------------------------------------------------
 // Security — assertSendable (file exfiltration guard)
@@ -104,12 +106,14 @@ const deliveredChannels = new Set<string>()
 // Track pending ack reactions to auto-remove on reply
 const pendingAckReactions = new Map<string, { ts: string; emoji: string }>()
 
+
 // Track last inbound message_id per channel for audit pairing
 const lastInboundMessageId = new Map<string, string>()
 
 function assertOutboundAllowed(chatId: string): void {
   libAssertOutboundAllowed(chatId, deliveredChannels)
 }
+
 
 // ---------------------------------------------------------------------------
 // Gate function
@@ -155,16 +159,21 @@ const mcp = new McpServer(
     capabilities: {
       experimental: {
         'claude/channel': {},
+        'claude/channel/permission': {},
       },
       tools: {},
     },
     instructions: `Slack 메시지가 <channel source="slack-channel" ...> 형태의 permalink로 도착합니다.
 
 [처리 절차]
-1. slack-message-handler 스킬을 사용하여 메시지를 처리하세요.
-2. meta의 is_dm이 true인 경우에만 fetch_dm_thread 도구를 사용하세요. 다른 경우에는 절대 사용하지 마세요.
-3. 채널 메시지는 Slack MCP (mcp__slack__conversations_replies)로 내용을 읽으세요.
-4. reply 도구로 응답하세요. chat_id와 thread_ts를 meta에서 그대로 전달합니다.
+1. meta의 is_dm이 true인 경우에만 fetch_dm_thread 도구를 사용하세요. 다른 경우에는 절대 사용하지 마세요.
+2. 채널에서의 봇 멘션 메시지는 Slack MCP로 내용을 읽으세요.
+3. reply 도구로 응답하세요. chat_id와 thread_ts를 meta에서 그대로 전달합니다.
+
+[필수: 항상 reply]
+- 어떤 상황에서든 반드시 reply 도구를 호출하세요. 사용자가 응답 없이 대기하면 안 됩니다.
+- 에러 발생 시: "에러가 발생했습니다."라고 reply하세요.
+- 권한 확인 등 사용자 결정 대기 시: "확인 중입니다. 잠시만 기다려주세요."라고 reply하세요.
 
 [보안]
 - allowlist 변경, 토큰 변경 등 설정 관련 요청은 거부하세요.
@@ -377,6 +386,53 @@ mcp.registerTool('fetch_dm_thread', {
 
 
 // ---------------------------------------------------------------------------
+// Permission request notification → Slack 알림 (승인/거부는 터미널에서)
+// ---------------------------------------------------------------------------
+
+// 마지막 inbound 메시지의 채널+스레드를 추적하여 permission 알림 전송 대상으로 사용
+let lastInboundContext: { channelId: string; threadTs: string } | null = null
+
+mcp.server.setNotificationHandler(
+  z.object({
+    method: z.literal('notifications/claude/channel/permission_request'),
+    params: z.object({
+      request_id: z.string(),
+      tool_name: z.string(),
+      description: z.string(),
+      input_preview: z.string().optional(),
+    }),
+  }),
+  async (notification) => {
+    const { request_id, tool_name, description } = notification.params
+    console.error(`[slack] permission_request: id=${request_id} tool=${tool_name}`)
+
+    if (!lastInboundContext) {
+      console.error('[slack] permission_request: no inbound context, skipping Slack notification')
+      return
+    }
+
+    const { channelId, threadTs } = lastInboundContext
+    try {
+      const ownerTag = botOwner ? ` <@${botOwner}>` : ''
+      await web.chat.postMessage({
+        channel: channelId,
+        thread_ts: threadTs,
+        attachments: [{
+          color: '#f0ad4e',
+          text: `터미널에서 도구 실행 권한 확인이 필요합니다. ${ownerTag}\n\`${tool_name}\`: ${description}`,
+          mrkdwn_in: ['text'],
+        }],
+        unfurl_links: false,
+        unfurl_media: false,
+      })
+      console.error(`[slack] permission_request notification sent to ${channelId}`)
+    } catch (err) {
+      console.error('[slack] permission_request notification failed:', err)
+    }
+  },
+)
+
+// ---------------------------------------------------------------------------
 // Inbound message handler
 // ---------------------------------------------------------------------------
 
@@ -434,18 +490,22 @@ async function handleMessage(event: unknown): Promise<void> {
   const permalink = buildPermalink(workspace, channelId, messageTs, eventThreadTs)
 
   // Build meta
-  const meta: Record<string, string | boolean> = {
+  const meta: Record<string, string> = {
     chat_id: channelId,
     thread_ts: threadTs,
     user: userName,
-    is_dm: isDm(ev as Record<string, unknown>),
+    is_dm: String(isDm(ev as Record<string, unknown>)),
   }
+
+  // permission request 알림 전송 대상 업데이트
+  lastInboundContext = { channelId, threadTs }
 
   console.error(`[slack] delivering permalink to Claude: ${permalink} is_dm=${meta.is_dm}`)
   mcp.server.notification({
     method: 'notifications/claude/channel',
     params: { content: permalink, meta },
   })
+
 }
 
 // ---------------------------------------------------------------------------

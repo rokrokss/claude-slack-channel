@@ -11,6 +11,7 @@ import { appendFileSync, mkdirSync } from 'fs'
 export interface Access {
   allowFrom: string[]
   ackReaction?: string
+  botOwner?: string
 }
 
 export type GateAction = 'deliver' | 'drop'
@@ -194,6 +195,10 @@ export function gate(event: unknown, opts: GateOptions): GateResult {
   if (ev['subtype'] === 'bot_message') return { action: 'deliver', access: opts.access }
   // Require user
   if (!ev['user']) return { action: 'drop' }
+  // Check owner
+  if (opts.access.botOwner && ev['user'] === opts.access.botOwner) {
+    return { action: 'deliver', access: opts.access }
+  }
   // Check allowlist
   if (opts.access.allowFrom.includes(ev['user'] as string)) {
     return { action: 'deliver', access: opts.access }
