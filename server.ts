@@ -464,7 +464,7 @@ async function handleMessage(event: unknown): Promise<void> {
   }
 
   // 3. Empty — 빈 메시지 드롭
-  if (isEmptyMessage(ev as Record<string, unknown>)) {
+  if (isEmptyMessage(ev)) {
     console.error(`[slack] inbound dropped (empty): channel=${channelId}`)
     return
   }

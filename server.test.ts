@@ -622,6 +622,8 @@ describe('parseSlackTimestamp', () => {
   test('returns null for invalid timestamp', () => {
     expect(parseSlackTimestamp('')).toBeNull()
     expect(parseSlackTimestamp('not-a-number')).toBeNull()
+    expect(parseSlackTimestamp('123abc')).toBeNull()
+    expect(parseSlackTimestamp('123')).toBeNull()
   })
 
   test('handles integer timestamp without fractional part', () => {

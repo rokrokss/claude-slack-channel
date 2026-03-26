@@ -183,8 +183,8 @@ export function resolveThreadTs(event: Record<string, unknown>): string {
 // Stale event filtering
 
 export function parseSlackTimestamp(ts: string): Date | null {
+  if (!/^\d+\.\d+$/.test(ts)) return null
   const sec = parseFloat(ts)
-  if (isNaN(sec)) return null
   return new Date(sec * 1000)
 }
 
