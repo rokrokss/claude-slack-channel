@@ -15,6 +15,7 @@ import {
   parseSlackTimestamp,
   isStaleEvent,
   isEmptyMessage,
+  EventDeduplicator,
   type Access,
   type AuditEntry,
   type GateOptions,
@@ -685,5 +686,53 @@ describe('isEmptyMessage', () => {
 
   test('returns false for message with attachments', () => {
     expect(isEmptyMessage({ attachments: [{ text: 'alert' }] })).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// EventDeduplicator
+// ---------------------------------------------------------------------------
+
+describe('EventDeduplicator', () => {
+  test('first occurrence returns false (not duplicate)', () => {
+    const dedup = new EventDeduplicator(60_000)
+    expect(dedup.isDuplicate('C1', '1234.5678')).toBe(false)
+  })
+
+  test('second occurrence returns true (duplicate)', () => {
+    const dedup = new EventDeduplicator(60_000)
+    dedup.isDuplicate('C1', '1234.5678')
+    expect(dedup.isDuplicate('C1', '1234.5678')).toBe(true)
+  })
+
+  test('different channels with same ts are not duplicates', () => {
+    const dedup = new EventDeduplicator(60_000)
+    dedup.isDuplicate('C1', '1234.5678')
+    expect(dedup.isDuplicate('C2', '1234.5678')).toBe(false)
+  })
+
+  test('different ts in same channel are not duplicates', () => {
+    const dedup = new EventDeduplicator(60_000)
+    dedup.isDuplicate('C1', '1234.5678')
+    expect(dedup.isDuplicate('C1', '1234.9999')).toBe(false)
+  })
+
+  test('entries expire after TTL', () => {
+    const dedup = new EventDeduplicator(50) // 50ms TTL
+    dedup.isDuplicate('C1', '1234.5678')
+    // Wait for expiry
+    const start = Date.now()
+    while (Date.now() - start < 60) {} // busy wait 60ms
+    expect(dedup.isDuplicate('C1', '1234.5678')).toBe(false)
+  })
+
+  test('cleanup removes expired entries', () => {
+    const dedup = new EventDeduplicator(50, 1) // TTL 50ms, cleanup every call
+    dedup.isDuplicate('C1', '1.0')
+    dedup.isDuplicate('C1', '2.0')
+    const start = Date.now()
+    while (Date.now() - start < 60) {}
+    dedup.isDuplicate('C1', '3.0') // triggers cleanup (interval=1)
+    expect(dedup.size).toBe(1) // only '3.0' remains
   })
 })
