@@ -57,17 +57,12 @@ Slack Event (message / app_mention)
          ▼
   ┌─────────────┐
   │  4. Gate    │──── 봇 자신? subtype 불허? ──── drop
-  │  (접근제어)  │──── allowlist에 없음? ──────── drop
+  │  (접근제어)   │──── allowlist에 없음? ──────── drop
   └──────┬──────┘
          │ 허용된 사용자
          ▼
-  ┌──────────────┐
-  │ 5. Rate Limit│──── 채널당 한도 초과? ──── drop
-  └──────┬───────┘
-         │ 통과
-         ▼
   ┌─────────────┐
-  │  6. Deliver │──── permalink 생성
+  │  5. Deliver │──── permalink 생성
   │             │──── ack reaction 추가
   │             │──── mcp.notification() → Claude
   └─────────────┘
@@ -75,14 +70,13 @@ Slack Event (message / app_mention)
 
 ## 아웃바운드 도구
 
-Claude가 사용할 수 있는 MCP 도구 5개:
+Claude가 사용할 수 있는 MCP 도구:
 
 ```
 Claude (tool call)
     │
-    ├── reply ──────────── 메시지 전송 (+ 파일 첨부)
+    ├── reply ──────────── 메시지 전송
     │                      chat.postMessage → mrkdwn 포맷 변환
-    │                      파일: filesUploadV2
     │                      ack reaction 자동 제거
     │
     ├── react ─────────── 이모지 리액션 추가
@@ -116,16 +110,11 @@ Claude (tool call)
 │                                                     │
 │  Dedup ────────── 중복 이벤트 필터링 (TTL 10분)        │
 │                                                     │
-│  Rate Limit ───── 채널당 슬라이딩 윈도우               │
-│                   (기본: 60초당 10건)                  │
 ├─────────────────────────────────────────────────────┤
 │                  Outbound Security                   │
 │                                                     │
 │  Outbound Gate ── 인바운드 수신 이력이 있는             │
 │                   채널에만 응답 허용                    │
-│                                                     │
-│  File Guard ───── state 디렉토리 파일 전송 차단         │
-│                   (inbox/ 하위만 허용)                 │
 │                                                     │
 │  Prompt Hardening ── 시스템 프롬프트에서                │
 │                      설정 변경 요청 거부                │
@@ -137,7 +126,7 @@ Claude (tool call)
 ```
 server.ts          MCP 서버, Slack 클라이언트, 이벤트 핸들링
 lib.ts             순수 함수 (gate, security, formatting, audit, event helpers)
-server.test.ts     lib.ts 테스트 (bun:test, 93개)
+server.test.ts     lib.ts 테스트 (bun:test, 76개)
 ```
 
 ## 데이터 흐름 상세
@@ -202,8 +191,6 @@ Claude Code ──► permission_request notification
 - `groups:history` — 비공개 채널 읽기
 - `im:history` — DM 읽기
 - `reactions:write` — 리액션 추가/제거
-- `files:read` — 파일 다운로드
-- `files:write` — 파일 업로드
 - `users:read` — 사용자 이름 확인
 
 ### 4. 워크스페이스에 재설치
@@ -241,8 +228,6 @@ Claude Code ──► permission_request notification
 | `SLACK_BOT_OWNER` | X | 봇 소유자 사용자 ID. allowlist 없이도 항상 허용 |
 | `SLACK_ACK_REACTION` | X | 수신 확인 이모지 (예: `eyes`). 답장 후 자동 제거 |
 | `SLACK_DEFAULT_COLOR` | X | 메시지 사이드바 색상 hex (기본: `#e5da9a`) |
-| `SLACK_RATE_LIMIT_MAX` | X | 채널당 최대 이벤트 수 (기본: `10`) |
-| `SLACK_RATE_LIMIT_WINDOW_MS` | X | Rate limit 윈도우 (ms, 기본: `60000`) |
 
 허용된 사용자는 DM이든 채널이든 어디서든 봇과 대화할 수 있습니다.
 
@@ -255,7 +240,7 @@ claude --dangerously-load-development-channels server:slack-channel
 ## 개발
 
 ```bash
-bun test          # 테스트 실행 (93개)
+bun test          # 테스트 실행 (76개)
 bun run typecheck # 타입 체크
 ```
 

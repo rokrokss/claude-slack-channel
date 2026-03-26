@@ -3,7 +3,7 @@
  * Slack Channel for Claude Code
  *
  * Two-way Slack ↔ Claude Code bridge via Socket Mode + MCP stdio.
- * Security: gate layer, outbound gate, file exfiltration guard, prompt hardening.
+ * Security: gate layer, outbound gate, prompt hardening.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -13,13 +13,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SocketModeClient } from '@slack/socket-mode'
 import { WebClient } from '@slack/web-api'
 import { homedir } from 'os'
-import { join, resolve } from 'path'
+import { join } from 'path'
 import {
   mkdirSync,
 } from 'fs'
 import { z } from 'zod'
 import {
-  assertSendable as libAssertSendable,
   assertOutboundAllowed as libAssertOutboundAllowed,
   fixSlackMrkdwn,
   extractMessageText,
@@ -31,7 +30,6 @@ import {
   isStaleEvent,
   isEmptyMessage,
   EventDeduplicator,
-  RateLimiter,
   type Access,
   type GateResult,
 } from './lib.ts'
@@ -41,7 +39,6 @@ import {
 // ---------------------------------------------------------------------------
 
 const STATE_DIR = process.env['SLACK_STATE_DIR'] || join(homedir(), '.claude', 'channels', 'slack')
-const INBOX_DIR = join(STATE_DIR, 'inbox')
 const DEFAULT_COLOR = (process.env['SLACK_DEFAULT_COLOR'] || '#e5da9a').trim()
 
 // ---------------------------------------------------------------------------
@@ -49,7 +46,6 @@ const DEFAULT_COLOR = (process.env['SLACK_DEFAULT_COLOR'] || '#e5da9a').trim()
 // ---------------------------------------------------------------------------
 
 mkdirSync(STATE_DIR, { recursive: true })
-mkdirSync(INBOX_DIR, { recursive: true })
 
 const botToken = process.env['SLACK_BOT_TOKEN'] || ''
 const appToken = process.env['SLACK_APP_TOKEN'] || ''
@@ -93,14 +89,6 @@ let botUserId = ''
 const access: Access = { allowFrom: allowFromList, ackReaction, botOwner }
 
 // ---------------------------------------------------------------------------
-// Security — assertSendable (file exfiltration guard)
-// ---------------------------------------------------------------------------
-
-function assertSendable(filePath: string): void {
-  libAssertSendable(filePath, resolve(STATE_DIR), resolve(INBOX_DIR))
-}
-
-// ---------------------------------------------------------------------------
 // Security — outbound gate
 // ---------------------------------------------------------------------------
 
@@ -111,9 +99,6 @@ const deliveredChannels = new Set<string>()
 const pendingAckReactions = new Map<string, { ts: string; emoji: string }>()
 
 const dedup = new EventDeduplicator()
-const RATE_LIMIT_MAX = parseInt(process.env['SLACK_RATE_LIMIT_MAX'] || '10', 10)
-const RATE_LIMIT_WINDOW_MS = parseInt(process.env['SLACK_RATE_LIMIT_WINDOW_MS'] || '60000', 10)
-const rateLimiter = new RateLimiter(RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS)
 
 // Track last inbound message_id per channel for audit pairing
 const lastInboundMessageId = new Map<string, string>()
@@ -195,16 +180,15 @@ const mcp = new McpServer(
 // ---------------------------------------------------------------------------
 
 mcp.registerTool('reply', {
-  description: 'Send a message to a Slack channel or DM. Supports file attachments.',
+  description: 'Send a message to a Slack channel or DM.',
   inputSchema: {
     chat_id: z.string().describe('Slack channel or DM ID'),
     text: z.string().describe('Message text (mrkdwn supported)'),
     thread_ts: z.string().optional().describe('Thread timestamp to reply in-thread (optional)'),
     color: z.string().optional().describe('attachment 색상 hex (기본: #e5da9a)'),
-    files: z.array(z.string()).optional().describe('Absolute paths of files to upload (optional)'),
   },
 }, async (args) => {
-  console.error(`[slack] reply called: chat_id=${args.chat_id} thread_ts=${args.thread_ts ?? '(none)'} text_len=${args.text?.length ?? 0} files=${args.files?.length ?? 0}`)
+  console.error(`[slack] reply called: chat_id=${args.chat_id} thread_ts=${args.thread_ts ?? '(none)'} text_len=${args.text?.length ?? 0}`)
   auditLog(STATE_DIR, {
     ts: new Date().toISOString(),
     direction: 'outbound',
@@ -233,17 +217,6 @@ mcp.registerTool('reply', {
   const lastTs = (res.ts as string) || ''
   console.error(`[slack] reply sent: chat_id=${args.chat_id} ts=${lastTs}`)
 
-  if (args.files && args.files.length > 0) {
-    for (const filePath of args.files) {
-      assertSendable(filePath)
-      const resolved = resolve(filePath)
-      console.error(`[slack] reply uploading file: ${resolved}`)
-      const uploadArgs: Record<string, any> = { channel_id: args.chat_id, file: resolved }
-      if (args.thread_ts) uploadArgs.thread_ts = args.thread_ts
-      await web.filesUploadV2(uploadArgs as any)
-    }
-  }
-
   // Auto-remove ack reaction after reply
   const pendingAck = pendingAckReactions.get(args.chat_id)
   if (pendingAck) {
@@ -261,7 +234,7 @@ mcp.registerTool('reply', {
   return {
     content: [{
       type: 'text' as const,
-      text: `Sent message${args.files?.length ? ` + ${args.files.length} file(s)` : ''} to ${args.chat_id}${lastTs ? ` [ts: ${lastTs}]` : ''}`,
+      text: `Sent message to ${args.chat_id}${lastTs ? ` [ts: ${lastTs}]` : ''}`,
     }],
   }
 })
@@ -376,12 +349,6 @@ mcp.registerTool('fetch_dm_thread', {
         user_id: m.user || m.bot_id,
         text: extractMessageText(m),
         thread_ts: m.thread_ts,
-        files: m.files?.map((f: any) => ({
-          name: f.name,
-          mimetype: f.mimetype,
-          size: f.size,
-          url_private: f.url_private,
-        })),
       }
     }),
   )
@@ -487,13 +454,7 @@ async function handleMessage(event: unknown): Promise<void> {
     return
   }
 
-  // 5. Rate limit — 채널당 속도 제한
-  if (rateLimiter.isRateLimited(channelId)) {
-    console.error(`[slack] inbound dropped (rate limited): channel=${channelId}`)
-    return
-  }
-
-  // 6. Deliver (기존 로직 유지)
+  // 5. Deliver (기존 로직 유지)
   deliveredChannels.add(channelId)
   lastInboundMessageId.set(channelId, messageTs)
 

@@ -3,7 +3,7 @@
  * All functions are side-effect-free or accept dependencies as parameters.
  */
 
-import { resolve, join } from 'path'
+import { join } from 'path'
 import { appendFileSync, mkdirSync } from 'fs'
 
 // Types
@@ -36,10 +36,6 @@ export function defaultAccess(): Access {
 
 export function fixSlackMrkdwn(text: string): string {
   return text.replace(/\*([^*]+)\*/g, '\u200B*$1*\u200B')
-}
-
-export function sanitizeFilename(name: string): string {
-  return name.replace(/[\[\]\n\r;]/g, '_').replace(/\.\./g, '_')
 }
 
 // Block Kit parsing
@@ -140,15 +136,6 @@ export function auditLog(stateDir: string, entry: AuditEntry): void {
 
 // Security
 
-export function assertSendable(filePath: string, stateDir: string, inboxDir: string): void {
-  const resolved = resolve(filePath)
-  if (resolved.startsWith(stateDir) && !resolved.startsWith(inboxDir)) {
-    throw new Error(
-      `Blocked: cannot send files from state directory (${stateDir}). Only files in inbox/ are sendable.`,
-    )
-  }
-}
-
 export function assertOutboundAllowed(
   chatId: string,
   deliveredChannels: ReadonlySet<string>,
@@ -240,43 +227,6 @@ export class EventDeduplicator {
 
   get size(): number {
     return this.seen.size
-  }
-}
-
-// Rate limiting (per-channel sliding window)
-
-export class RateLimiter {
-  private windows = new Map<string, number[]>() // channel → timestamps
-  private readonly maxEvents: number
-  private readonly windowMs: number
-
-  constructor(maxEvents: number, windowMs: number) {
-    this.maxEvents = maxEvents
-    this.windowMs = windowMs
-  }
-
-  /** Returns true if the event should be rate-limited (dropped). */
-  isRateLimited(channel: string): boolean {
-    const now = Date.now()
-    const cutoff = now - this.windowMs
-
-    let timestamps = this.windows.get(channel)
-    if (!timestamps) {
-      timestamps = []
-      this.windows.set(channel, timestamps)
-    }
-
-    // Remove expired entries
-    while (timestamps.length > 0 && timestamps[0] <= cutoff) {
-      timestamps.shift()
-    }
-
-    if (timestamps.length >= this.maxEvents) {
-      return true
-    }
-
-    timestamps.push(now)
-    return false
   }
 }
 

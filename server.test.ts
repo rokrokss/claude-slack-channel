@@ -1,9 +1,7 @@
 import { describe, test, expect } from 'bun:test'
 import {
   gate,
-  assertSendable,
   assertOutboundAllowed,
-  sanitizeFilename,
   defaultAccess,
   fixSlackMrkdwn,
   extractMessageText,
@@ -16,7 +14,6 @@ import {
   isStaleEvent,
   isEmptyMessage,
   EventDeduplicator,
-  RateLimiter,
   type Access,
   type AuditEntry,
   type GateOptions,
@@ -168,39 +165,6 @@ describe('gate', () => {
 })
 
 // ---------------------------------------------------------------------------
-// assertSendable()
-// ---------------------------------------------------------------------------
-
-describe('assertSendable', () => {
-  const stateDir = '/home/user/.claude/channels/slack'
-  const inboxDir = '/home/user/.claude/channels/slack/inbox'
-
-  test('blocks .env in state dir', () => {
-    expect(() => assertSendable(`${stateDir}/.env`, stateDir, inboxDir)).toThrow('Blocked')
-  })
-
-  test('blocks access.json in state dir', () => {
-    expect(() => assertSendable(`${stateDir}/access.json`, stateDir, inboxDir)).toThrow('Blocked')
-  })
-
-  test('blocks nested files in state dir', () => {
-    expect(() => assertSendable(`${stateDir}/subdir/secret`, stateDir, inboxDir)).toThrow('Blocked')
-  })
-
-  test('allows files in inbox/', () => {
-    expect(() => assertSendable(`${inboxDir}/photo.png`, stateDir, inboxDir)).not.toThrow()
-  })
-
-  test('allows files outside state dir entirely', () => {
-    expect(() => assertSendable('/tmp/output.txt', stateDir, inboxDir)).not.toThrow()
-  })
-
-  test('allows home directory files', () => {
-    expect(() => assertSendable('/home/user/project/file.ts', stateDir, inboxDir)).not.toThrow()
-  })
-})
-
-// ---------------------------------------------------------------------------
 // assertOutboundAllowed()
 // ---------------------------------------------------------------------------
 
@@ -217,44 +181,6 @@ describe('assertOutboundAllowed', () => {
   test('blocks channels not delivered to', () => {
     const delivered = new Set(['D_DIFFERENT'])
     expect(() => assertOutboundAllowed('C_ATTACKER', delivered)).toThrow('Outbound gate')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// sanitizeFilename()
-// ---------------------------------------------------------------------------
-
-describe('sanitizeFilename', () => {
-  test('strips square brackets', () => {
-    expect(sanitizeFilename('file[1].txt')).toBe('file_1_.txt')
-  })
-
-  test('strips newlines', () => {
-    expect(sanitizeFilename('file\nname.txt')).toBe('file_name.txt')
-  })
-
-  test('strips carriage returns', () => {
-    expect(sanitizeFilename('file\rname.txt')).toBe('file_name.txt')
-  })
-
-  test('strips semicolons', () => {
-    expect(sanitizeFilename('file;name.txt')).toBe('file_name.txt')
-  })
-
-  test('replaces path traversal (..)', () => {
-    expect(sanitizeFilename('../../etc/passwd')).toBe('_/_/etc/passwd')
-  })
-
-  test('leaves clean names alone', () => {
-    expect(sanitizeFilename('photo.png')).toBe('photo.png')
-  })
-
-  test('handles combined attack vector', () => {
-    const result = sanitizeFilename('[../..\n;evil].txt')
-    expect(result).not.toContain('[')
-    expect(result).not.toContain('..')
-    expect(result).not.toContain('\n')
-    expect(result).not.toContain(';')
   })
 })
 
@@ -740,38 +666,3 @@ describe('EventDeduplicator', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// RateLimiter
-// ---------------------------------------------------------------------------
-
-describe('RateLimiter', () => {
-  test('allows events under limit', () => {
-    const limiter = new RateLimiter(5, 60_000) // 5 per minute
-    expect(limiter.isRateLimited('C1')).toBe(false)
-    expect(limiter.isRateLimited('C1')).toBe(false)
-    expect(limiter.isRateLimited('C1')).toBe(false)
-  })
-
-  test('blocks events over limit', () => {
-    const limiter = new RateLimiter(2, 60_000) // 2 per minute
-    limiter.isRateLimited('C1') // 1
-    limiter.isRateLimited('C1') // 2
-    expect(limiter.isRateLimited('C1')).toBe(true) // 3 → blocked
-  })
-
-  test('separate channels have independent limits', () => {
-    const limiter = new RateLimiter(1, 60_000)
-    limiter.isRateLimited('C1') // 1 for C1
-    expect(limiter.isRateLimited('C1')).toBe(true)  // C1 at limit
-    expect(limiter.isRateLimited('C2')).toBe(false)  // C2 is fresh
-  })
-
-  test('events outside window do not count', () => {
-    const limiter = new RateLimiter(1, 50) // 1 per 50ms
-    limiter.isRateLimited('C1') // 1
-    expect(limiter.isRateLimited('C1')).toBe(true) // blocked
-    const start = Date.now()
-    while (Date.now() - start < 60) {} // wait for window to pass
-    expect(limiter.isRateLimited('C1')).toBe(false) // allowed again
-  })
-})
