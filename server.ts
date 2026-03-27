@@ -16,15 +16,12 @@ import { homedir } from 'os'
 import { join } from 'path'
 import {
   mkdirSync,
-  writeFileSync,
-  readFileSync,
-  unlinkSync,
+  appendFileSync,
 } from 'fs'
 import { z } from 'zod'
 import {
   assertOutboundAllowed as libAssertOutboundAllowed,
   gate as libGate,
-  clientSupportsChannels,
   auditLog,
   buildPermalink,
   isDm,
@@ -42,7 +39,6 @@ import { registerTools } from './tools.ts'
 // ---------------------------------------------------------------------------
 
 const STATE_DIR = process.env['SLACK_STATE_DIR'] || join(homedir(), '.claude', 'channels', 'slack')
-const LOCK_FILE = join(STATE_DIR, 'socket.lock')
 const DEFAULT_COLOR = (process.env['SLACK_DEFAULT_COLOR'] || '#e5da9a').trim()
 
 // ---------------------------------------------------------------------------
@@ -50,6 +46,13 @@ const DEFAULT_COLOR = (process.env['SLACK_DEFAULT_COLOR'] || '#e5da9a').trim()
 // ---------------------------------------------------------------------------
 
 mkdirSync(STATE_DIR, { recursive: true })
+
+const DEBUG_LOG = join(STATE_DIR, 'debug.log')
+function debugLog(msg: string): void {
+  const line = `${new Date().toISOString()} ${msg}\n`
+  appendFileSync(DEBUG_LOG, line)
+  console.error(msg)
+}
 
 const botToken = process.env['SLACK_BOT_TOKEN'] || ''
 const appToken = process.env['SLACK_APP_TOKEN'] || ''
@@ -371,72 +374,36 @@ socket.on('app_mention', async ({ event, ack }) => {
 // Startup
 // ---------------------------------------------------------------------------
 
-async function main(): Promise<void> {
-  // Register oninitialized — defer Socket Mode until we confirm client supports channels
-  mcp.server.oninitialized = () => {
-    void (async () => {
-      const caps = mcp.server.getClientCapabilities() as Record<string, unknown> | undefined
-      if (!clientSupportsChannels(caps)) {
-        console.error('[slack] Socket Mode skipped — client does not support channels. Tools-only mode.')
-        return
-      }
-
-      // Resolve bot's own user ID (for mention detection + self-filtering)
-      try {
-        const auth = await web.auth.test()
-        botUserId = (auth.user_id as string) || ''
-      } catch (err) {
-        console.error('[slack] Failed to resolve bot user ID, skipping Socket Mode:', err)
-        return
-      }
-
-      // Preempt any existing Socket Mode instance
-      try {
-        const prev = readFileSync(LOCK_FILE, 'utf-8').trim()
-        const [prevPidStr, prevStartStr] = prev.split('\n')
-        const prevPid = Number(prevPidStr)
-        const prevStart = Number(prevStartStr)
-        if (prevPid && prevPid !== process.pid && prevStart) {
-          // Verify the PID still belongs to our process (not reused by OS)
-          try {
-            const stat = Bun.spawnSync(['ps', '-p', String(prevPid), '-o', 'lstart='])
-            const psOutput = stat.stdout.toString().trim()
-            // Only signal if the process exists and started around the recorded time
-            if (psOutput && Math.abs(new Date(psOutput).getTime() - prevStart) < 5000) {
-              process.kill(prevPid, 'SIGUSR1')
-              console.error(`[slack] Sent SIGUSR1 to previous instance (pid ${prevPid})`)
-            } else {
-              console.error(`[slack] Stale lock file (pid ${prevPid} is a different process), ignoring`)
-            }
-          } catch {
-            // Process already gone — ignore
-          }
-        }
-      } catch {
-        // No lock file yet — first instance
-      }
-
-      // Connect Socket Mode (Slack ↔ local WebSocket)
-      await socket.start()
-      writeFileSync(LOCK_FILE, `${process.pid}\n${Date.now()}`, 'utf-8')
-      console.error(`[slack] Socket Mode connected (pid ${process.pid})`)
-
-      // Yield socket to a newer instance on SIGUSR1
-      process.on('SIGUSR1', () => {
-        console.error('[slack] Received SIGUSR1 — disconnecting Socket Mode for newer instance')
-        socket.disconnect()
-        try { unlinkSync(LOCK_FILE) } catch { /* already removed */ }
-      })
-    })().catch((err) => {
-      console.error('[slack] Socket Mode init failed:', err)
-      process.exit(1)
-    })
+async function startSocketMode(): Promise<void> {
+  // Resolve bot's own user ID (for mention detection + self-filtering)
+  try {
+    const auth = await web.auth.test()
+    botUserId = (auth.user_id as string) || ''
+  } catch (err) {
+    console.error('[slack] Failed to resolve bot user ID:', err)
+    process.exit(1)
   }
+
+  // Connect Socket Mode (Slack ↔ local WebSocket)
+  await socket.start()
+  debugLog(`[slack] Socket Mode connected (pid ${process.pid})`)
+}
+
+async function main(): Promise<void> {
+  // Start Socket Mode (Slack WebSocket) — always connect regardless of client
+  // channel capability. Claude Code determines channel support on its side via
+  // --channels flag; the server cannot detect this from the MCP handshake.
+  // If the client registered channel handlers, notifications are delivered;
+  // otherwise they are silently ignored.
+  await startSocketMode().catch((err) => {
+    console.error('[slack] Socket Mode init failed:', err)
+    process.exit(1)
+  })
 
   // Connect MCP stdio (server ↔ Claude Code)
   const transport = new StdioServerTransport()
   await mcp.connect(transport)
-  console.error('[slack] MCP server running on stdio')
+  debugLog('[slack] MCP server running on stdio')
 }
 
 main().catch((err) => {
