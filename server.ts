@@ -16,11 +16,15 @@ import { homedir } from 'os'
 import { join } from 'path'
 import {
   mkdirSync,
+  writeFileSync,
+  readFileSync,
+  unlinkSync,
 } from 'fs'
 import { z } from 'zod'
 import {
   assertOutboundAllowed as libAssertOutboundAllowed,
   gate as libGate,
+  clientSupportsChannels,
   auditLog,
   buildPermalink,
   isDm,
@@ -38,6 +42,7 @@ import { registerTools } from './tools.ts'
 // ---------------------------------------------------------------------------
 
 const STATE_DIR = process.env['SLACK_STATE_DIR'] || join(homedir(), '.claude', 'channels', 'slack')
+const LOCK_FILE = join(STATE_DIR, 'socket.lock')
 const DEFAULT_COLOR = (process.env['SLACK_DEFAULT_COLOR'] || '#e5da9a').trim()
 
 // ---------------------------------------------------------------------------
@@ -370,8 +375,8 @@ async function main(): Promise<void> {
   // Register oninitialized — defer Socket Mode until we confirm client supports channels
   mcp.server.oninitialized = () => {
     void (async () => {
-      const caps = mcp.server.getClientCapabilities()
-      if (!caps?.experimental?.['claude/channel']) {
+      const caps = mcp.server.getClientCapabilities() as Record<string, unknown> | undefined
+      if (!clientSupportsChannels(caps)) {
         console.error('[slack] Socket Mode skipped — client does not support channels. Tools-only mode.')
         return
       }
@@ -385,9 +390,43 @@ async function main(): Promise<void> {
         return
       }
 
+      // Preempt any existing Socket Mode instance
+      try {
+        const prev = readFileSync(LOCK_FILE, 'utf-8').trim()
+        const [prevPidStr, prevStartStr] = prev.split('\n')
+        const prevPid = Number(prevPidStr)
+        const prevStart = Number(prevStartStr)
+        if (prevPid && prevPid !== process.pid && prevStart) {
+          // Verify the PID still belongs to our process (not reused by OS)
+          try {
+            const stat = Bun.spawnSync(['ps', '-p', String(prevPid), '-o', 'lstart='])
+            const psOutput = stat.stdout.toString().trim()
+            // Only signal if the process exists and started around the recorded time
+            if (psOutput && Math.abs(new Date(psOutput).getTime() - prevStart) < 5000) {
+              process.kill(prevPid, 'SIGUSR1')
+              console.error(`[slack] Sent SIGUSR1 to previous instance (pid ${prevPid})`)
+            } else {
+              console.error(`[slack] Stale lock file (pid ${prevPid} is a different process), ignoring`)
+            }
+          } catch {
+            // Process already gone — ignore
+          }
+        }
+      } catch {
+        // No lock file yet — first instance
+      }
+
       // Connect Socket Mode (Slack ↔ local WebSocket)
       await socket.start()
-      console.error('[slack] Socket Mode connected')
+      writeFileSync(LOCK_FILE, `${process.pid}\n${Date.now()}`, 'utf-8')
+      console.error(`[slack] Socket Mode connected (pid ${process.pid})`)
+
+      // Yield socket to a newer instance on SIGUSR1
+      process.on('SIGUSR1', () => {
+        console.error('[slack] Received SIGUSR1 — disconnecting Socket Mode for newer instance')
+        socket.disconnect()
+        try { unlinkSync(LOCK_FILE) } catch { /* already removed */ }
+      })
     })().catch((err) => {
       console.error('[slack] Socket Mode init failed:', err)
       process.exit(1)
