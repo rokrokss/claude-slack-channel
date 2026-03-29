@@ -29,6 +29,7 @@ import {
   isStaleEvent,
   isEmptyMessage,
   EventDeduplicator,
+  hasChannelsFlag,
   type Access,
   type GateResult,
 } from './lib/index.ts'
@@ -390,17 +391,15 @@ async function startSocketMode(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  // Start Socket Mode (Slack WebSocket) — always connect regardless of client
-  // channel capability. Claude Code determines channel support on its side via
-  // --channels flag; the server cannot detect this from the MCP handshake.
-  // If the client registered channel handlers, notifications are delivered;
-  // otherwise they are silently ignored.
-  await startSocketMode().catch((err) => {
-    console.error('[slack] Socket Mode init failed:', err)
-    process.exit(1)
-  })
+  if (hasChannelsFlag()) {
+    await startSocketMode().catch((err) => {
+      console.error('[slack] Socket Mode init failed:', err)
+      process.exit(1)
+    })
+  } else {
+    debugLog('[slack] Socket Mode skipped — parent process has no channels flag. Tools-only mode.')
+  }
 
-  // Connect MCP stdio (server ↔ Claude Code)
   const transport = new StdioServerTransport()
   await mcp.connect(transport)
   debugLog('[slack] MCP server running on stdio')
