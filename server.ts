@@ -17,6 +17,10 @@ import { join } from 'path'
 import {
   mkdirSync,
   appendFileSync,
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+  existsSync,
 } from 'fs'
 import { z } from 'zod'
 import {
@@ -375,7 +379,43 @@ socket.on('app_mention', async ({ event, ack }) => {
 // Startup
 // ---------------------------------------------------------------------------
 
+const PID_FILE = join(STATE_DIR, 'socket.pid')
+
+function killPreviousInstance(): void {
+  if (!existsSync(PID_FILE)) return
+  try {
+    const oldPid = parseInt(readFileSync(PID_FILE, 'utf-8').trim(), 10)
+    if (isNaN(oldPid) || oldPid === process.pid) return
+    // Check if process is alive (signal 0 doesn't kill, just checks)
+    process.kill(oldPid, 0)
+    debugLog(`[slack] Killing previous Socket Mode instance (pid ${oldPid})`)
+    process.kill(oldPid, 'SIGTERM')
+  } catch {
+    // Process doesn't exist or no permission — safe to proceed
+  }
+}
+
+function writePidFile(): void {
+  writeFileSync(PID_FILE, String(process.pid), 'utf-8')
+}
+
+function cleanupPidFile(): void {
+  try {
+    if (existsSync(PID_FILE) && readFileSync(PID_FILE, 'utf-8').trim() === String(process.pid)) {
+      unlinkSync(PID_FILE)
+    }
+  } catch {}
+}
+
+process.on('exit', cleanupPidFile)
+process.on('SIGTERM', () => { cleanupPidFile(); process.exit(0) })
+process.on('SIGINT', () => { cleanupPidFile(); process.exit(0) })
+
 async function startSocketMode(): Promise<void> {
+  // Kill previous instance if still running
+  killPreviousInstance()
+  writePidFile()
+
   // Resolve bot's own user ID (for mention detection + self-filtering)
   try {
     const auth = await web.auth.test()
