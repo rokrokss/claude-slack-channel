@@ -33,6 +33,7 @@ Claude Code 세션과 Slack을 양방향으로 연결하는 MCP 채널 서버입
 | `SLACK_BOT_OWNER` | - | 봇 소유자 사용자 ID. allowlist 없이도 항상 허용 |
 | `SLACK_ACK_REACTION` | - | 수신 확인 이모지 (예: `eyes`). 답장 후 자동 제거 |
 | `SLACK_DEFAULT_COLOR` | - | 메시지 사이드바 색상 hex (기본: `#e5da9a`) |
+| `SLACK_SHOW_FOOTER` | - | 메시지 하단 footer 표시 여부 (기본: `true`). `false`로 설정 시 숨김 |
 | `SLACK_FORCE_SOCKET_MODE` | - | `1`로 설정 시 플래그 감지를 건너뛰고 Socket Mode 강제 연결 |
 
 ## 실행

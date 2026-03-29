@@ -8,6 +8,8 @@ export interface ToolDependencies {
   web: WebClient
   stateDir: string
   defaultColor: string
+  botOwner?: string
+  showFooter: boolean
   assertOutboundAllowed: (chatId: string) => void
   lastInboundMessageId: Map<string, string>
   pendingAckReactions: Map<string, { channel: string; ts: string; emoji: string }>
@@ -15,7 +17,7 @@ export interface ToolDependencies {
 }
 
 export function registerTools(deps: ToolDependencies): void {
-  const { mcp, web, stateDir, defaultColor, assertOutboundAllowed, lastInboundMessageId, pendingAckReactions, resolveUserName } = deps
+  const { mcp, web, stateDir, defaultColor, botOwner, showFooter, assertOutboundAllowed, lastInboundMessageId, pendingAckReactions, resolveUserName } = deps
 
   mcp.registerTool('reply', {
     description: 'Send a message to a Slack channel or DM.',
@@ -48,6 +50,7 @@ export function registerTools(deps: ToolDependencies): void {
         color,
         text: fixSlackMrkdwn(args.text),
         mrkdwn_in: ['text'],
+        ...(showFooter && botOwner ? { footer: `다음 사용자가 만듬 <@${botOwner}>` } : {}),
       }],
       unfurl_links: false,
       unfurl_media: false,

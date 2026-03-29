@@ -78,7 +78,9 @@ const allowFromList = (process.env['SLACK_ALLOW_FROM'] || '')
 const ackReaction = (process.env['SLACK_ACK_REACTION'] || '').trim().replace(/^:|:$/g, '') || undefined
 console.error(`[slack] ackReaction: ${ackReaction ?? '(disabled)'}`)
 const botOwner = (process.env['SLACK_BOT_OWNER'] || '').trim() || undefined
+const showFooter = (process.env['SLACK_SHOW_FOOTER'] ?? 'true').trim().toLowerCase() !== 'false'
 console.error(`[slack] botOwner: ${botOwner ?? '(not set)'}`)
+console.error(`[slack] showFooter: ${showFooter}`)
 const workspace = process.env['SLACK_WORKSPACE'] || ''
 if (!workspace) {
   console.error('[slack] SLACK_WORKSPACE is required for permalink generation. Set it in .mcp.json env field.')
@@ -195,6 +197,8 @@ registerTools({
   web,
   stateDir: STATE_DIR,
   defaultColor: DEFAULT_COLOR,
+  botOwner,
+  showFooter,
   assertOutboundAllowed,
   lastInboundMessageId,
   pendingAckReactions,
@@ -229,13 +233,13 @@ mcp.server.setNotificationHandler(
 
     const { channelId, threadTs } = lastInboundContext
     try {
-      const ownerTag = botOwner ? ` <@${botOwner}>` : ''
       await web.chat.postMessage({
         channel: channelId,
         thread_ts: threadTs,
         attachments: [{
           color: '#f0ad4e',
-          text: `터미널에서 도구 실행 권한 확인이 필요합니다. ${ownerTag}\n\`${tool_name}\`: ${description}`,
+          text: `터미널에서 도구 실행 권한 확인이 필요합니다.\n\`${tool_name}\`: ${description}`,
+        ...(showFooter && botOwner ? { footer: `다음 사용자가 만듬 <@${botOwner}>` } : {}),
           mrkdwn_in: ['text'],
         }],
         unfurl_links: false,
