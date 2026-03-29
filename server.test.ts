@@ -15,6 +15,7 @@ import {
   isEmptyMessage,
   EventDeduplicator,
   clientSupportsChannels,
+  hasChannelsFlag,
   type Access,
   type AuditEntry,
   type GateOptions,
@@ -717,6 +718,55 @@ describe('clientSupportsChannels', () => {
 
   test('returns false when experimental is not an object', () => {
     expect(clientSupportsChannels({ experimental: 'string' })).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// hasChannelsFlag()
+// ---------------------------------------------------------------------------
+
+describe('hasChannelsFlag', () => {
+  test('returns true for --dangerously-load-development-channels', () => {
+    expect(hasChannelsFlag('claude --dangerously-load-development-channels server:slack-channel')).toBe(true)
+  })
+
+  test('returns true for --channels flag', () => {
+    expect(hasChannelsFlag('claude --channels plugin:telegram@anthropic')).toBe(true)
+  })
+
+  test('returns false for plain claude', () => {
+    expect(hasChannelsFlag('claude')).toBe(false)
+  })
+
+  test('returns false for other flags', () => {
+    expect(hasChannelsFlag('claude --allow-dangerously-skip-permissions')).toBe(false)
+  })
+
+  test('returns false for empty string', () => {
+    expect(hasChannelsFlag('')).toBe(false)
+  })
+
+  test('returns true when flag is among multiple args', () => {
+    expect(hasChannelsFlag('claude --verbose --dangerously-load-development-channels server:slack-channel --model opus')).toBe(true)
+  })
+
+  test('does not match --channels as substring of another flag', () => {
+    expect(hasChannelsFlag('claude --channelsFoo bar')).toBe(false)
+  })
+
+  test('matches --channels=value syntax', () => {
+    expect(hasChannelsFlag('claude --channels=plugin:foo@bar')).toBe(true)
+  })
+
+  test('SLACK_FORCE_SOCKET_MODE=1 overrides detection', () => {
+    const prev = process.env['SLACK_FORCE_SOCKET_MODE']
+    try {
+      process.env['SLACK_FORCE_SOCKET_MODE'] = '1'
+      expect(hasChannelsFlag('')).toBe(true)
+    } finally {
+      if (prev === undefined) delete process.env['SLACK_FORCE_SOCKET_MODE']
+      else process.env['SLACK_FORCE_SOCKET_MODE'] = prev
+    }
   })
 })
 
