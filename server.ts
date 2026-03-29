@@ -158,7 +158,7 @@ async function resolveUserName(userId: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 const mcp = new McpServer(
-  { name: 'slack-channel', version: '0.1.0' },
+  { name: 'slack-channel', version: '0.2.0' },
   {
     capabilities: {
       experimental: {
