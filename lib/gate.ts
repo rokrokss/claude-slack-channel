@@ -18,16 +18,6 @@ export function defaultAccess(): Access {
   return { allowFrom: [] }
 }
 
-/**
- * Check if the MCP client supports the channel capability.
- */
-export function clientSupportsChannels(capabilities: Record<string, unknown> | undefined): boolean {
-  if (!capabilities) return false
-  const experimental = capabilities['experimental']
-  if (!experimental || typeof experimental !== 'object') return false
-  return 'claude/channel' in experimental
-}
-
 export function gate(event: unknown, opts: GateOptions): GateResult {
   const ev = event as Record<string, unknown>
 

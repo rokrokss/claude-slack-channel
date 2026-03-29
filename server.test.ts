@@ -14,7 +14,6 @@ import {
   isStaleEvent,
   isEmptyMessage,
   EventDeduplicator,
-  clientSupportsChannels,
   hasChannelsFlag,
   type Access,
   type AuditEntry,
@@ -665,59 +664,6 @@ describe('EventDeduplicator', () => {
     while (Date.now() - start < 60) {}
     dedup.isDuplicate('C1', '3.0') // triggers cleanup (interval=1)
     expect(dedup.size).toBe(1) // only '3.0' remains
-  })
-})
-
-// ---------------------------------------------------------------------------
-// clientSupportsChannels()
-// ---------------------------------------------------------------------------
-
-describe('clientSupportsChannels', () => {
-  test('returns false for undefined capabilities', () => {
-    expect(clientSupportsChannels(undefined)).toBe(false)
-  })
-
-  test('returns false for empty capabilities', () => {
-    expect(clientSupportsChannels({})).toBe(false)
-  })
-
-  test('returns false when no experimental field', () => {
-    expect(clientSupportsChannels({ tools: {} })).toBe(false)
-  })
-
-  test('returns false when experimental is empty', () => {
-    expect(clientSupportsChannels({ experimental: {} })).toBe(false)
-  })
-
-  test('returns false when experimental has other keys but not claude/channel', () => {
-    expect(clientSupportsChannels({
-      experimental: { 'some/other': {} },
-    })).toBe(false)
-  })
-
-  test('returns true when claude/channel is present', () => {
-    expect(clientSupportsChannels({
-      experimental: { 'claude/channel': {} },
-    })).toBe(true)
-  })
-
-  test('returns true when claude/channel is present alongside other keys', () => {
-    expect(clientSupportsChannels({
-      experimental: {
-        'claude/channel': {},
-        'claude/channel/permission': {},
-      },
-    })).toBe(true)
-  })
-
-  test('returns true even if claude/channel value is null', () => {
-    expect(clientSupportsChannels({
-      experimental: { 'claude/channel': null },
-    })).toBe(true)
-  })
-
-  test('returns false when experimental is not an object', () => {
-    expect(clientSupportsChannels({ experimental: 'string' })).toBe(false)
   })
 })
 

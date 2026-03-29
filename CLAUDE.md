@@ -12,6 +12,7 @@
   - `event.ts` — DM 판별, 스레드 해석, stale/empty 필터링
   - `resilience.ts` — 이벤트 중복 제거 (EventDeduplicator)
   - `permalink.ts` — Slack 퍼마링크 빌더
+  - `process.ts` — 부모 프로세스 channels 플래그 감지 (hasChannelsFlag)
   - `index.ts` — barrel re-export
 - `server.test.ts` — lib/ 테스트 (bun:test)
 
