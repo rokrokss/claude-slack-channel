@@ -160,7 +160,7 @@ async function resolveUserName(userId: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 const mcp = new McpServer(
-  { name: 'slack-channel', version: '0.2.0' },
+  { name: 'slack-channel', version: '0.3.0' },
   {
     capabilities: {
       experimental: {
@@ -203,6 +203,10 @@ registerTools({
   lastInboundMessageId,
   pendingAckReactions,
   resolveUserName,
+  clearInboundContext: () => {
+    lastInboundContext = null
+    console.error('[slack] inbound context cleared (reply sent)')
+  },
 })
 
 // ---------------------------------------------------------------------------
@@ -210,6 +214,7 @@ registerTools({
 // ---------------------------------------------------------------------------
 
 // 마지막 inbound 메시지의 채널+스레드를 추적하여 permission 알림 전송 대상으로 사용
+// reply 도구 호출 시 초기화 — Slack 대화 처리 완료로 간주
 let lastInboundContext: { channelId: string; threadTs: string } | null = null
 
 mcp.server.setNotificationHandler(

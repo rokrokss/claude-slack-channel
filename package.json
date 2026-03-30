@@ -1,6 +1,6 @@
 {
   "name": "@rokrokss/claude-slack-channel",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Two-way Slack channel for Claude Code — Slack DM과 채널 멘션으로 Claude Code 세션과 대화",
   "type": "module",
   "bin": "./server.ts",

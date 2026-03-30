@@ -14,10 +14,11 @@ export interface ToolDependencies {
   lastInboundMessageId: Map<string, string>
   pendingAckReactions: Map<string, { channel: string; ts: string; emoji: string }>
   resolveUserName: (userId: string) => Promise<string>
+  clearInboundContext: () => void
 }
 
 export function registerTools(deps: ToolDependencies): void {
-  const { mcp, web, stateDir, defaultColor, botOwner, showFooter, assertOutboundAllowed, lastInboundMessageId, pendingAckReactions, resolveUserName } = deps
+  const { mcp, web, stateDir, defaultColor, botOwner, showFooter, assertOutboundAllowed, lastInboundMessageId, pendingAckReactions, resolveUserName, clearInboundContext } = deps
 
   mcp.registerTool('reply', {
     description: 'Send a message to a Slack channel or DM.',
@@ -72,6 +73,9 @@ export function registerTools(deps: ToolDependencies): void {
         console.error(`[slack] reply ack reaction removed: ${pendingAck.emoji}`)
       } catch (err) { console.error('[slack] ack reaction auto-remove failed:', err) }
     }
+
+    // Slack 대화 처리 완료로 간주 — permission_request 알림 대상 초기화
+    clearInboundContext()
 
     return {
       content: [{
