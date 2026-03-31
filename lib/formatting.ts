@@ -2,6 +2,21 @@ export function fixSlackMrkdwn(text: string): string {
   return text.replace(/\*([^*]+)\*/g, '\u200B*$1*\u200B')
 }
 
+function richTextElementToString(e: any): string {
+  switch (e.type) {
+    case 'link': return e.text || e.url || ''
+    case 'user': return `<@${e.user_id}>`
+    case 'channel': return `<#${e.channel_id}>`
+    case 'usergroup': return `<!subteam^${e.usergroup_id}>`
+    case 'emoji': return e.unicode ? String.fromCodePoint(...e.unicode.split('-').map((h: string) => parseInt(h, 16))) : `:${e.name}:`
+    case 'broadcast': return `<!${e.range}>`
+    case 'color': return e.value ?? ''
+    case 'date': return e.fallback ?? `<!date^${e.timestamp}^${e.format}>`
+    case 'team': return `<!team^${e.team_id}>`
+    default: return e.text ?? ''
+  }
+}
+
 export function extractMessageText(msg: Record<string, any>): string {
   const parts: string[] = []
 
@@ -10,7 +25,7 @@ export function extractMessageText(msg: Record<string, any>): string {
       if (block.type === 'rich_text' && block.elements) {
         for (const elem of block.elements) {
           if (elem.elements) {
-            parts.push(elem.elements.map((e: any) => e.text ?? '').join(''))
+            parts.push(elem.elements.map(richTextElementToString).join(''))
           }
         }
       } else if (block.type === 'section') {
@@ -21,7 +36,10 @@ export function extractMessageText(msg: Record<string, any>): string {
       } else if (block.type === 'header') {
         if (block.text?.text) parts.push(`*${block.text.text}*`)
       } else if (block.type === 'context' && block.elements) {
-        const texts = block.elements.map((e: any) => e.text ?? '').filter(Boolean)
+        const texts = block.elements.map((e: any) => {
+          if (e.type === 'image') return e.alt_text || '[image]'
+          return e.text ?? ''
+        }).filter(Boolean)
         if (texts.length) parts.push(texts.join(' '))
       } else if (block.type === 'divider') {
         parts.push('---')
